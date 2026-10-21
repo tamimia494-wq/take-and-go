@@ -60,7 +60,7 @@
 
 استخدم نطاقاً مستقلاً لكل خدمة ويب (`captain`, `admin`) ونطاقاً لخدمة API. عيّن **Pre-deploy Command** لخدمة API إلى `npm run db:migrate --workspace @take-and-go/api` حتى تُطبق migrations قبل تشغيل الخدمة، وعيّن المتغيرات التالية:
 
-- API: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`, `ADMIN_PHONE`, `ADMIN_PASSWORD`, `GREEN_API_URL`, `GREEN_API_INSTANCE_ID`, `GREEN_API_TOKEN`, `GREEN_API_GROUP_ID`, `GREEN_API_WEBHOOK_TOKEN`, `CAPTAIN_APP_URL`, `ADMIN_APP_URL`, `TZ=Asia/Amman`.
+- API: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`, `ADMIN_PASSWORD`, `GREEN_API_URL`, `GREEN_API_INSTANCE_ID`, `GREEN_API_TOKEN`, `GREEN_API_GROUP_ID`, `GREEN_API_WEBHOOK_TOKEN`, `CAPTAIN_APP_URL`, `ADMIN_APP_URL`, `TZ=Asia/Amman`.
 - Captain وAdmin: `NEXT_PUBLIC_API_URL=https://<api-domain>/api`.
 - `CAPTAIN_APP_URL` و`ADMIN_APP_URL` في خدمة API يجب أن يطابقا نطاقَي الويب دون `/` في النهاية.
 - قاعدة البيانات Neon مشتركة؛ لا تضع بيانات الاتصال في إعدادات الواجهة الأمامية.
@@ -71,7 +71,7 @@
 npm run db:seed --workspace @take-and-go/api
 ```
 
-تنشأ حسابات الإدارة من `ADMIN_PHONE` و`ADMIN_PASSWORD`، ولا يقبل seed كلمة المرور الافتراضية الموجودة في ملف المثال.
+يسجل المسؤول الدخول بكلمة المرور فقط. ينشئ seed حساب الإدارة من `ADMIN_PASSWORD`، ولا يقبل كلمة المرور الافتراضية الموجودة في ملف المثال. استخدم كلمة مرور قوية وفريدة واحفظها في متغير Railway السري؛ لا تضعها في Git أو المحادثات.
 
 ## المحاسبة
 

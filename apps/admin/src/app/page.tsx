@@ -65,7 +65,7 @@ export default function AdminHome() {
       const response = await fetch(`${API}/auth/admin/login`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ phone: form.get("phone"), password: form.get("password") })
+        body: JSON.stringify({ password: form.get("password") })
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "تعذر تسجيل الدخول.");
@@ -166,7 +166,6 @@ export default function AdminHome() {
           <form className="login-card" onSubmit={login}>
             <span className="login-icon"><ShieldCheck size={22} /></span>
             <p className="eyebrow">منطقة الإدارة</p><h2>تسجيل الدخول</h2><p className="muted">سجّل دخولك باستخدام حساب الإدارة</p>
-            <label>رقم الهاتف<input name="phone" type="tel" autoComplete="tel" placeholder="رقم هاتف الإدارة" required /></label>
             <label>كلمة المرور<input name="password" type="password" autoComplete="current-password" placeholder="كلمة المرور" required /></label>
             {error && <p className="error" role="alert">{error}</p>}
             <button className="button primary" disabled={busy}>{busy ? "جارٍ الدخول..." : "دخول لوحة الإدارة"}</button>

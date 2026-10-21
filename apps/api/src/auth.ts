@@ -21,6 +21,10 @@ const loginSchema = z.object({
   password: z.string().min(1).max(128)
 });
 
+const adminLoginSchema = z.object({
+  password: z.string().min(1).max(128)
+});
+
 function issueToken(id: string, role: UserRole): string {
   return jwt.sign({ sub: id, role }, config.jwtSecret, { expiresIn: "12h" });
 }
@@ -57,19 +61,12 @@ export async function captainLogin(req: Request, res: Response): Promise<void> {
 }
 
 export async function adminLogin(req: Request, res: Response): Promise<void> {
-  const parsed = loginSchema.safeParse(req.body);
+  const parsed = adminLoginSchema.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "أدخل رقم الهاتف وكلمة المرور." });
+    res.status(400).json({ error: "أدخل كلمة مرور الإدارة." });
     return;
   }
-  let phone: string;
-  try {
-    phone = normalizePhone(parsed.data.phone);
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "رقم الهاتف غير صالح." });
-    return;
-  }
-  const admin = await prisma.admin.findUnique({ where: { phone } });
+  const admin = await prisma.admin.findUnique({ where: { id: "admin" } });
   if (!admin || !(await bcrypt.compare(parsed.data.password, admin.passwordHash))) {
     res.status(401).json({ error: "بيانات الدخول غير صحيحة." });
     return;
