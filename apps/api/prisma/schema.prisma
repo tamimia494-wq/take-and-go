@@ -25,6 +25,7 @@ enum LedgerType {
 enum JobCategory {
   ORDER
   RIDER
+  MIXED
 }
 
 enum JobStatus {
@@ -32,6 +33,7 @@ enum JobStatus {
   PROCESSING
   CHARGED
   REJECTED
+  CANCELED
 }
 
 enum ReplyStatus {
@@ -39,6 +41,7 @@ enum ReplyStatus {
   PROCESSING
   CHARGED
   REJECTED
+  CANCELED
 }
 
 model Captain {
@@ -91,8 +94,12 @@ model WhatsAppJob {
   sourceMessageId   String
   sourceSenderPhone String?
   priceDinars       Int
+  riderPriceDinars  Int           @default(0)
+  orderPriceDinars  Int           @default(0)
   category          JobCategory
   commissionFils    Int
+  riderCommissionFils Int         @default(0)
+  orderCommissionFils Int         @default(0)
   status            JobStatus    @default(PENDING)
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt

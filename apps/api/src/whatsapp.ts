@@ -5,7 +5,7 @@ import { config } from "./config";
 import { prisma } from "./db";
 import { deleteGroupMessage, getGroupParticipants, greenApiRequest, sendGroupMessage } from "./green-api";
 import { phoneFromChatId } from "./money";
-import { processJobReaction } from "./accounting";
+import { cancelChargedJob, processJobReaction } from "./accounting";
 
 type Webhook = {
   typeWebhook?: string;
@@ -94,15 +94,29 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     return;
   }
 
-  const priceDinars = extractPrice(text);
-  if (priceDinars === null) return;
-  const category = isOrder(text) ? JobCategory.ORDER : JobCategory.RIDER;
+  const items = text.split(/\r?\n/).map((line) => {
+    const priceDinars = extractPrice(line);
+    return priceDinars === null ? null : { priceDinars, category: isOrder(line) ? JobCategory.ORDER : JobCategory.RIDER };
+  }).filter((item) => item !== null);
+  if (items.length === 0) return;
+  const riderPriceDinars = items
+    .filter((item) => item.category === JobCategory.RIDER)
+    .reduce((sum, item) => sum + item.priceDinars, 0);
+  const orderPriceDinars = items
+    .filter((item) => item.category === JobCategory.ORDER)
+    .reduce((sum, item) => sum + item.priceDinars, 0);
+  const priceDinars = riderPriceDinars + orderPriceDinars;
+  if (!Number.isSafeInteger(priceDinars) || priceDinars > 2_147_483_647) {
+    throw new Error("The WhatsApp job price exceeds the supported range.");
+  }
+  const category = riderPriceDinars > 0 && orderPriceDinars > 0
+    ? JobCategory.MIXED
+    : orderPriceDinars > 0 ? JobCategory.ORDER : JobCategory.RIDER;
   const settings = await prisma.appSettings.findUnique({ where: { id: "default" } });
   if (!settings) throw new Error("Application settings have not been initialized.");
-  const perFiveFils = category === JobCategory.ORDER
-    ? settings.orderCommissionPerFiveFils
-    : settings.riderCommissionPerFiveFils;
-  const commissionFils = (priceDinars / 5) * perFiveFils;
+  const riderCommissionFils = (riderPriceDinars / 5) * settings.riderCommissionPerFiveFils;
+  const orderCommissionFils = (orderPriceDinars / 5) * settings.orderCommissionPerFiveFils;
+  const commissionFils = riderCommissionFils + orderCommissionFils;
   if (!Number.isSafeInteger(commissionFils) || commissionFils > 2_147_483_647) {
     throw new Error("The configured commission exceeds the supported range.");
   }
@@ -114,8 +128,12 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
         sourceMessageId: messageId,
         sourceSenderPhone: phoneFromChatId(webhook.senderData?.sender ?? "") ?? undefined,
         priceDinars,
+        riderPriceDinars,
+        orderPriceDinars,
         category,
-        commissionFils
+        commissionFils,
+        riderCommissionFils,
+        orderCommissionFils
       }
     });
   } catch (error) {
@@ -127,38 +145,61 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
 async function handleReaction(webhook: Webhook, data: Record<string, unknown>): Promise<void> {
   const reactionData = objectValue(data.reactionMessageData) ?? {};
   const reaction = stringValue(reactionData.text) ?? stringValue(reactionData.reaction);
-  if (reaction !== "👍" && reaction !== "👍🏻") return;
-
+  const normalizedReaction = reaction?.replace(/\uFE0F/g, "");
   const actor = phoneFromChatId(webhook.senderData?.sender ?? "");
   const targetMessageId =
     stringValue(reactionData.stanzaId) ??
     stringValue(reactionData.idMessage) ??
     stringValue(reactionData.targetMessageId);
   if (!targetMessageId || !actor) return;
-  if (!(await isGroupAdministrator(actor))) return;
 
-  const result = await processJobReaction(targetMessageId);
-  if (result.result === "not_tracked") return;
-  if (result.result === "charged") {
-    await sendGroupMessage(
-      `✅ تم اعتماد الطلب للكابتن. قيمة الطلب ${result.priceDinars} د.أ، العمولة ${formatJod(result.amountFils)} د.أ. الرصيد المتبقي ${formatJod(result.balanceFils)} د.أ.`
-    );
+  if (normalizedReaction === "👍" || normalizedReaction === "👍🏻") {
+    const reply = await prisma.whatsAppReply.findUnique({
+      where: { messageId: targetMessageId },
+      include: { job: { select: { sourceSenderPhone: true } } }
+    });
+    if (!reply || !reply.job.sourceSenderPhone || actor !== reply.job.sourceSenderPhone) return;
+
+    const result = await processJobReaction(targetMessageId);
+    if (result.result === "not_tracked") return;
+    if (result.result === "charged") {
+      await sendGroupMessage(
+        `✅ تم اعتماد الطلب للكابتن. ${formatJobPrice(result.orderPriceDinars, result.riderPriceDinars)}. العمولة ${formatJod(result.amountFils)} د.أ. الرصيد المتبقي ${formatJod(result.balanceFils)} د.أ.`
+      );
+      return;
+    }
+
+    if (result.result === "insufficient" || result.result === "unregistered") {
+      try {
+        await deleteGroupMessage(targetMessageId);
+      } catch (error) {
+        console.error("Green API could not delete a rejected captain reply:", error);
+      }
+      const price = result.priceDinars ?? 0;
+      const commission = formatJod(result.amountFils);
+      const reason = result.result === "insufficient"
+        ? "رصيدك غير كافٍ"
+        : "رقمك غير مسجل أو حسابك غير مفعل";
+      await sendGroupMessage(
+        `⚠️ ${reason}. قيمة الطلب ${price} د.أ وعمولته ${commission} د.أ. يرجى التواصل مع الإدارة وشحن الرصيد لتتمكن من أخذ الطلبات.`
+      );
+    }
     return;
   }
 
-  if (result.result === "insufficient" || result.result === "unregistered") {
-    try {
-      await deleteGroupMessage(targetMessageId);
-    } catch (error) {
-      console.error("Green API could not delete a rejected captain reply:", error);
-    }
-    const price = result.priceDinars ?? 0;
-    const commission = formatJod(result.amountFils);
-    const reason = result.result === "insufficient"
-      ? "رصيدك غير كافٍ"
-      : "رقمك غير مسجل أو حسابك غير مفعل";
+  if (normalizedReaction === "❌") {
+    const reply = await prisma.whatsAppReply.findUnique({
+      where: { messageId: targetMessageId },
+      include: { job: { select: { sourceSenderPhone: true } } }
+    });
+    if (!reply) return;
+    const isOwner = actor === reply.senderPhone || actor === reply.job.sourceSenderPhone;
+    if (!isOwner && !(await isGroupAdministrator(actor))) return;
+
+    const result = await cancelChargedJob(targetMessageId, actor);
+    if (result.result !== "canceled") return;
     await sendGroupMessage(
-      `⚠️ ${reason}. قيمة الطلب ${price} د.أ وعمولته ${commission} د.أ. يرجى التواصل مع الإدارة وشحن الرصيد لتتمكن من أخذ الطلبات.`
+      `❌ تم إلغاء الطلب ${formatJobPrice(result.orderPriceDinars, result.riderPriceDinars)} وإرجاع العمولة ${formatJod(result.amountFils)} د.أ إلى رصيد الكابتن.`
     );
   }
 }
@@ -199,12 +240,18 @@ function extractPrice(text: string): number | null {
     return String(index >= 0 ? index : persianIndex);
   });
   const matches = westernDigits.match(/\d+/g) ?? [];
-  const candidates = matches.map(Number).filter((amount) => amount > 0 && amount <= 100_000 && amount % 5 === 0);
-  return candidates.at(-1) ?? null;
+  const candidates = matches.map(Number).filter(
+    (amount) => Number.isSafeInteger(amount) && amount > 0 && amount <= 2_147_483_647 && amount % 5 === 0
+  );
+  return candidates[0] ?? null;
 }
 
 function isOrder(text: string): boolean {
-  return /اوردر|الاوردرات|اوردرين|أوردر|الأوردرات|أوردرين/i.test(text);
+  const normalized = text
+    .replace(/[أإآ]/g, "ا")
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[إ]/g, "ا");
+  return /(?:ال)?اوردر(?:ين|ات)?/i.test(normalized);
 }
 
 function isConfirmation(text: string): boolean {
@@ -223,4 +270,11 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
 
 function formatJod(fils: number): string {
   return (fils / 1000).toFixed(3).replace(/\.?0+$/, "");
+}
+
+function formatJobPrice(orderPriceDinars: number, riderPriceDinars: number): string {
+  const parts: string[] = [];
+  if (orderPriceDinars > 0) parts.push(`أوردر ${orderPriceDinars} د.أ`);
+  if (riderPriceDinars > 0) parts.push(`راكب ${riderPriceDinars} د.أ`);
+  return `القيمة: ${parts.join(" + ")}`;
 }

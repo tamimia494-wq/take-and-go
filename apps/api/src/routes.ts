@@ -49,7 +49,7 @@ router.get("/captain/dashboard", requireAuth("captain"), async (req, res) => {
     prisma.captain.findUniqueOrThrow({ where: { id: captainId }, select: { balanceFils: true } }),
     prisma.whatsAppJob.findMany({
       where: { status: "CHARGED", replies: { some: { captainId } } },
-      select: { category: true, priceDinars: true }
+      select: { riderPriceDinars: true, orderPriceDinars: true }
     }),
     prisma.ledgerEntry.findMany({
       where: { captainId },
@@ -60,10 +60,10 @@ router.get("/captain/dashboard", requireAuth("captain"), async (req, res) => {
   res.json({
     balanceJod: fromFils(captain.balanceFils),
     statistics: {
-      orders: jobs.filter((job) => job.category === "ORDER").length,
-      riders: jobs.filter((job) => job.category === "RIDER").length,
-      orderUnits: jobs.filter((job) => job.category === "ORDER").reduce((sum, job) => sum + job.priceDinars / 5, 0),
-      riderUnits: jobs.filter((job) => job.category === "RIDER").reduce((sum, job) => sum + job.priceDinars / 5, 0)
+      orders: jobs.filter((job) => job.orderPriceDinars > 0).length,
+      riders: jobs.filter((job) => job.riderPriceDinars > 0).length,
+      orderUnits: jobs.reduce((sum, job) => sum + job.orderPriceDinars / 5, 0),
+      riderUnits: jobs.reduce((sum, job) => sum + job.riderPriceDinars / 5, 0)
     },
     ledger: ledger.map((entry) => ({
       ...entry,

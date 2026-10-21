@@ -10,6 +10,8 @@ function required(name: string): string {
   return value;
 }
 
+const greenApiGroupId = process.env.GREEN_API_GROUP_ID;
+
 export const config = {
   port: Number(process.env.PORT ?? process.env.API_PORT ?? 4000),
   databaseUrl: required("DATABASE_URL"),
@@ -18,7 +20,9 @@ export const config = {
   greenApiUrl: (process.env.GREEN_API_URL ?? "https://api.green-api.com").replace(/\/$/, ""),
   greenApiInstanceId: process.env.GREEN_API_INSTANCE_ID,
   greenApiToken: process.env.GREEN_API_TOKEN,
-  greenApiGroupId: process.env.GREEN_API_GROUP_ID,
+  greenApiGroupId: greenApiGroupId && /^\d+$/.test(greenApiGroupId)
+    ? `${greenApiGroupId}@g.us`
+    : greenApiGroupId,
   captainAppUrl: process.env.CAPTAIN_APP_URL ?? "http://localhost:3001",
   adminAppUrl: process.env.ADMIN_APP_URL ?? "http://localhost:3002",
   timezone: process.env.TZ ?? "Asia/Amman"
