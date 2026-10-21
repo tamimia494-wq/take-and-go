@@ -1,0 +1,226 @@
+import bcrypt from "bcryptjs";
+import { JobCategory, Prisma } from "@prisma/client";
+import type { Request, Response } from "express";
+import { config } from "./config";
+import { prisma } from "./db";
+import { deleteGroupMessage, getGroupParticipants, greenApiRequest, sendGroupMessage } from "./green-api";
+import { phoneFromChatId } from "./money";
+import { processJobReaction } from "./accounting";
+
+type Webhook = {
+  typeWebhook?: string;
+  idMessage?: string;
+  senderData?: { chatId?: string; sender?: string };
+  messageData?: Record<string, unknown>;
+};
+
+export async function importGroupCaptains(): Promise<{ imported: number; total: number }> {
+  const participantIds = await getGroupParticipants();
+  const phones = new Set<string>();
+  for (const id of participantIds) {
+    const phone = phoneFromChatId(id);
+    if (phone) phones.add(phone);
+  }
+  const passwordHash = await bcrypt.hash("123456", 12);
+  const created = await prisma.captain.createMany({
+    data: [...phones].map((phone) => ({ phone, passwordHash })),
+    skipDuplicates: true
+  });
+  return { imported: created.count, total: phones.size };
+}
+
+export async function receiveGreenApiWebhook(req: Request, res: Response): Promise<void> {
+  if (!config.webhookToken || !config.greenApiGroupId) {
+    res.status(503).json({ error: "Green API integration is not configured." });
+    return;
+  }
+  const auth = req.header("authorization") ?? "";
+  const token = auth.replace(/^(Bearer|Basic)\s+/i, "");
+  if (token !== config.webhookToken) {
+    res.status(401).json({ error: "Unauthorized webhook." });
+    return;
+  }
+  const webhook = req.body as Webhook;
+  if (webhook.typeWebhook !== "incomingMessageReceived") {
+    res.sendStatus(200);
+    return;
+  }
+
+  try {
+    await processIncomingWebhook(webhook);
+    res.sendStatus(200);
+  } catch (error) {
+    console.error("Green API webhook processing failed:", error);
+    res.status(500).json({ error: "Webhook processing failed." });
+  }
+}
+
+async function processIncomingWebhook(webhook: Webhook): Promise<void> {
+  const groupId = config.greenApiGroupId;
+  const chatId = webhook.senderData?.chatId;
+  const data = webhook.messageData;
+  const messageId = webhook.idMessage;
+  if (!groupId || chatId !== groupId || !data || !messageId) return;
+
+  const type = stringValue(data.typeMessage);
+  if (type === "reactionMessage") {
+    await handleReaction(webhook, data);
+    return;
+  }
+
+  const text = messageText(data);
+  if (!text) return;
+  const sourceMessageId = quotedMessageId(data);
+  if (isConfirmation(text) && sourceMessageId) {
+    const job = await prisma.whatsAppJob.findUnique({
+      where: { groupId_sourceMessageId: { groupId, sourceMessageId } }
+    });
+    if (!job || job.status !== "PENDING") return;
+
+    const senderPhone = phoneFromChatId(webhook.senderData?.sender ?? "");
+    if (!senderPhone) return;
+    const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
+    await prisma.whatsAppReply.upsert({
+      where: { messageId },
+      update: {},
+      create: {
+        messageId,
+        senderPhone,
+        jobId: job.id,
+        captainId: captain?.id,
+        body: text
+      }
+    });
+    return;
+  }
+
+  const priceDinars = extractPrice(text);
+  if (priceDinars === null) return;
+  const category = isOrder(text) ? JobCategory.ORDER : JobCategory.RIDER;
+  const settings = await prisma.appSettings.findUnique({ where: { id: "default" } });
+  if (!settings) throw new Error("Application settings have not been initialized.");
+  const perFiveFils = category === JobCategory.ORDER
+    ? settings.orderCommissionPerFiveFils
+    : settings.riderCommissionPerFiveFils;
+  const commissionFils = (priceDinars / 5) * perFiveFils;
+  if (!Number.isSafeInteger(commissionFils) || commissionFils > 2_147_483_647) {
+    throw new Error("The configured commission exceeds the supported range.");
+  }
+
+  try {
+    await prisma.whatsAppJob.create({
+      data: {
+        groupId: chatId,
+        sourceMessageId: messageId,
+        sourceSenderPhone: phoneFromChatId(webhook.senderData?.sender ?? "") ?? undefined,
+        priceDinars,
+        category,
+        commissionFils
+      }
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return;
+    throw error;
+  }
+}
+
+async function handleReaction(webhook: Webhook, data: Record<string, unknown>): Promise<void> {
+  const reactionData = objectValue(data.reactionMessageData) ?? {};
+  const reaction = stringValue(reactionData.text) ?? stringValue(reactionData.reaction);
+  if (reaction !== "👍" && reaction !== "👍🏻") return;
+
+  const actor = phoneFromChatId(webhook.senderData?.sender ?? "");
+  const targetMessageId =
+    stringValue(reactionData.stanzaId) ??
+    stringValue(reactionData.idMessage) ??
+    stringValue(reactionData.targetMessageId);
+  if (!targetMessageId || !actor) return;
+  if (!(await isGroupAdministrator(actor))) return;
+
+  const result = await processJobReaction(targetMessageId);
+  if (result.result === "not_tracked") return;
+  if (result.result === "charged") {
+    await sendGroupMessage(
+      `✅ تم اعتماد الطلب للكابتن. قيمة الطلب ${result.priceDinars} د.أ، العمولة ${formatJod(result.amountFils)} د.أ. الرصيد المتبقي ${formatJod(result.balanceFils)} د.أ.`
+    );
+    return;
+  }
+
+  if (result.result === "insufficient" || result.result === "unregistered") {
+    try {
+      await deleteGroupMessage(targetMessageId);
+    } catch (error) {
+      console.error("Green API could not delete a rejected captain reply:", error);
+    }
+    const price = result.priceDinars ?? 0;
+    const commission = formatJod(result.amountFils);
+    const reason = result.result === "insufficient"
+      ? "رصيدك غير كافٍ"
+      : "رقمك غير مسجل أو حسابك غير مفعل";
+    await sendGroupMessage(
+      `⚠️ ${reason}. قيمة الطلب ${price} د.أ وعمولته ${commission} د.أ. يرجى التواصل مع الإدارة وشحن الرصيد لتتمكن من أخذ الطلبات.`
+    );
+  }
+}
+
+async function isGroupAdministrator(phone: string): Promise<boolean> {
+  const data = await greenApiRequest<{ participants?: Array<{ id?: string; participantId?: string; phoneNumber?: string; isAdmin?: boolean; isSuperAdmin?: boolean }> }>(
+    "getGroupData",
+    { groupId: config.greenApiGroupId }
+  );
+  return (data.participants ?? []).some((participant) => {
+    const id = participant.phoneNumber?.trim() || participant.id || participant.participantId || "";
+    return phoneFromChatId(id) === phone && (participant.isAdmin === true || participant.isSuperAdmin === true);
+  });
+}
+
+function messageText(data: Record<string, unknown>): string | null {
+  const textData = objectValue(data.textMessageData);
+  const extendedData = objectValue(data.extendedTextMessageData);
+  return stringValue(textData?.textMessage) ?? stringValue(extendedData?.text) ?? null;
+}
+
+function quotedMessageId(data: Record<string, unknown>): string | null {
+  const extended = objectValue(data.extendedTextMessageData);
+  const candidates = [
+    stringValue(extended?.stanzaId),
+    stringValue(extended?.quotedMessageId),
+    stringValue(objectValue(extended?.contextInfo)?.stanzaId),
+    stringValue(objectValue(data.quotedMessage)?.idMessage),
+    stringValue(objectValue(data.quotedMessage)?.stanzaId)
+  ];
+  return candidates.find(Boolean) ?? null;
+}
+
+function extractPrice(text: string): number | null {
+  const westernDigits = text.replace(/[٠-٩۰-۹]/g, (digit) => {
+    const index = "٠١٢٣٤٥٦٧٨٩".indexOf(digit);
+    const persianIndex = "۰۱۲۳۴۵۶۷۸۹".indexOf(digit);
+    return String(index >= 0 ? index : persianIndex);
+  });
+  const matches = westernDigits.match(/\d+/g) ?? [];
+  const candidates = matches.map(Number).filter((amount) => amount > 0 && amount <= 100_000 && amount % 5 === 0);
+  return candidates.at(-1) ?? null;
+}
+
+function isOrder(text: string): boolean {
+  return /اوردر|الاوردرات|اوردرين|أوردر|الأوردرات|أوردرين/i.test(text);
+}
+
+function isConfirmation(text: string): boolean {
+  return text.trim().replace(/[!؟?.,،؛\s]/g, "") === "تم";
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function formatJod(fils: number): string {
+  return (fils / 1000).toFixed(3).replace(/\.?0+$/, "");
+}

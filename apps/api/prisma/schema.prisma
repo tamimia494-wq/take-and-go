@@ -1,0 +1,122 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum CaptainStatus {
+  PENDING_PROFILE
+  ACTIVE
+  SUSPENDED
+}
+
+enum LedgerType {
+  CREDIT
+  ORDER_COMMISSION
+  RIDER_COMMISSION
+  GROUP_FLOOR
+  ADJUSTMENT
+}
+
+enum JobCategory {
+  ORDER
+  RIDER
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  CHARGED
+  REJECTED
+}
+
+enum ReplyStatus {
+  PENDING
+  PROCESSING
+  CHARGED
+  REJECTED
+}
+
+model Captain {
+  id             String         @id @default(cuid())
+  phone          String         @unique
+  passwordHash   String
+  fullName       String?
+  status         CaptainStatus  @default(PENDING_PROFILE)
+  balanceFils    Int            @default(0)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+  ledgerEntries  LedgerEntry[]
+  replies        WhatsAppReply[]
+}
+
+model Admin {
+  id           String   @id @default(cuid())
+  phone        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model AppSettings {
+  id                       String   @id @default("default")
+  groupFloorFils           Int      @default(0)
+  riderCommissionPerFiveFils Int     @default(750)
+  orderCommissionPerFiveFils Int    @default(1000)
+  updatedAt                DateTime @updatedAt
+}
+
+model LedgerEntry {
+  id             String     @id @default(cuid())
+  captainId      String
+  type           LedgerType
+  amountFils     Int
+  balanceAfterFils Int
+  description    String
+  reference      String?
+  idempotencyKey String?    @unique
+  createdAt      DateTime   @default(now())
+  captain        Captain    @relation(fields: [captainId], references: [id])
+
+  @@index([captainId, createdAt])
+}
+
+model WhatsAppJob {
+  id                String       @id @default(cuid())
+  groupId           String
+  sourceMessageId   String
+  sourceSenderPhone String?
+  priceDinars       Int
+  category          JobCategory
+  commissionFils    Int
+  status            JobStatus    @default(PENDING)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  replies           WhatsAppReply[]
+
+  @@unique([groupId, sourceMessageId])
+  @@index([status, createdAt])
+}
+
+model WhatsAppReply {
+  id             String       @id @default(cuid())
+  messageId      String       @unique
+  senderPhone    String
+  jobId          String
+  captainId      String?
+  body           String
+  status         ReplyStatus   @default(PENDING)
+  createdAt      DateTime     @default(now())
+  job            WhatsAppJob  @relation(fields: [jobId], references: [id])
+  captain        Captain?     @relation(fields: [captainId], references: [id])
+}
+
+model WeeklyFloorCharge {
+  id          String   @id @default(cuid())
+  weekKey     String   @unique
+  completedAt DateTime @default(now())
+}

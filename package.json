@@ -1,0 +1,25 @@
+{
+  "name": "take-and-go",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/api",
+    "apps/captain",
+    "apps/admin"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace @take-and-go/api",
+    "dev:captain": "npm run dev --workspace @take-and-go/captain",
+    "dev:admin": "npm run dev --workspace @take-and-go/admin",
+    "build:api": "npm run build --workspace @take-and-go/api",
+    "build:captain": "npm run build --workspace @take-and-go/captain",
+    "build:admin": "npm run build --workspace @take-and-go/admin",
+    "db:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
+    "db:migrate": "prisma migrate deploy --schema apps/api/prisma/schema.prisma",
+    "db:seed": "tsx apps/api/prisma/seed.ts",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}

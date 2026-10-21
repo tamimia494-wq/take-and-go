@@ -1,0 +1,81 @@
+# Take & Go
+
+منصة عربية لإدارة الكباتن والعمولات، بواجهتين منفصلتين للكابتن والإدارة، وواجهة API مشتركة. يستخدم المشروع Neon PostgreSQL للتخزين، وGreen API لربط مجموعة واتساب، وRailway لاستضافة الخدمات.
+
+## مكونات المشروع
+
+- `apps/captain`: موقع الكابتن (منفصل في النشر).
+- `apps/admin`: لوحة الإدارة (منفصلة في النشر).
+- `apps/api`: المصادقة، الأرصدة، الجرد، الحسابات المالية، Webhook الخاص بـ Green API، والخصم الأسبوعي.
+- Neon: قاعدة البيانات المشتركة بين المواقع والخدمات.
+
+## التشغيل المحلي
+
+1. ثبّت Node.js 20 أو أحدث.
+2. أنشئ قاعدة PostgreSQL في Neon، وانسخ رابط الاتصال pooled إلى `DATABASE_URL` ورابط الاتصال المباشر إلى `DIRECT_URL`.
+3. انسخ `.env.example` إلى `.env` واملأ بيانات Neon و`JWT_SECRET` وبيانات الإدارة. يمكن تأجيل متغيرات Green API إلى الخطوة الأخيرة؛ يعمل الـ API دونها، وتظل وظائف واتساب متوقفة حتى إعدادها.
+4. من جذر المشروع شغّل:
+
+   ```powershell
+   npm install
+   npm run db:generate
+   npm run db:migrate
+   npm run db:seed
+   ```
+
+5. شغّل الخدمات في نوافذ طرفية منفصلة:
+
+   ```powershell
+   npm run dev:api
+   npm run dev:captain
+   npm run dev:admin
+   ```
+
+6. افتح موقع الكابتن على `http://localhost:3001` ولوحة الإدارة على `http://localhost:3002`.
+
+## ربط Green API
+
+1. جهّز Instance مفعّلاً في Green API، وأضف رقم واتساب المتصل إلى المجموعة المستهدفة كمسؤول. قراءة قائمة المشاركين عبر `getGroupData` وحذف رسالة عضو يتطلبان الصلاحيات المناسبة في المجموعة.
+2. أضف بيانات Instance وToken ومعرّف المجموعة إلى متغيرات `GREEN_API_INSTANCE_ID`, `GREEN_API_TOKEN`, و`GREEN_API_GROUP_ID`.
+3. في إعدادات Webhook للـ Instance، اضبط عنوان Webhook إلى:
+
+   `https://<api-domain>/webhooks/green-api`
+
+   فعّل `incomingWebhook` وأدخل `Bearer <GREEN_API_WEBHOOK_TOKEN>` كرمز Webhook. يتحقق الـ API من ترويسة `Authorization`.
+4. من لوحة الإدارة، استخدم زر المزامنة لاستيراد أعضاء المجموعة المحددة فقط. الحساب الجديد يبدأ بكلمة مرور مؤقتة `123456` ورصيد صفر؛ يجب على الكابتن تسجيل الدخول وإضافة اسمه قبل استخدام الحساب.
+5. صيغة الطلب في المجموعة يجب أن تحتوي مبلغاً صحيحاً من مضاعفات 5 (مثل 5 أو 10 أو 20). تُصنف الرسالة التي تحتوي كلمة «أوردر» كأوردر، وما عدا ذلك كراكب. على الكابتن الرد «تم»، ثم يعتمد مسؤول المجموعة الطلب بإضافة تفاعل 👍 إلى الرد. يتطلب حذف الرد المرفوض أن يكون رقم Green API مسؤولاً في المجموعة.
+
+> استورد أعضاء المجموعة فقط بعد التأكد من صلاحية استخدام أرقامهم وإبلاغ المشاركين بسياسة الخصوصية المناسبة. هذه المنصة لا تنفذ رسائل تسويقية أو تواصل جماعي.
+
+## النشر على Railway
+
+أنشئ ثلاثة Services من المستودع نفسه، واجعل **Root Directory** لكل خدمة `/`:
+
+| الخدمة | Build Command | Start Command |
+| --- | --- | --- |
+| API | `npm ci && npm run build --workspace @take-and-go/api` | `npm run start --workspace @take-and-go/api` |
+| Captain | `npm ci && npm run build --workspace @take-and-go/captain` | `npm run start --workspace @take-and-go/captain` |
+| Admin | `npm ci && npm run build --workspace @take-and-go/admin` | `npm run start --workspace @take-and-go/admin` |
+
+استخدم نطاقاً مستقلاً لكل خدمة ويب (`captain`, `admin`) ونطاقاً لخدمة API. عيّن **Pre-deploy Command** لخدمة API إلى `npm run db:migrate --workspace @take-and-go/api` حتى تُطبق migrations قبل تشغيل الخدمة، وعيّن المتغيرات التالية:
+
+- API: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`, `ADMIN_PHONE`, `ADMIN_PASSWORD`, `GREEN_API_URL`, `GREEN_API_INSTANCE_ID`, `GREEN_API_TOKEN`, `GREEN_API_GROUP_ID`, `GREEN_API_WEBHOOK_TOKEN`, `CAPTAIN_APP_URL`, `ADMIN_APP_URL`, `TZ=Asia/Amman`.
+- Captain وAdmin: `NEXT_PUBLIC_API_URL=https://<api-domain>/api`.
+- `CAPTAIN_APP_URL` و`ADMIN_APP_URL` في خدمة API يجب أن يطابقا نطاقَي الويب دون `/` في النهاية.
+- قاعدة البيانات Neon مشتركة؛ لا تضع بيانات الاتصال في إعدادات الواجهة الأمامية.
+
+بعد نشر API لأول مرة، شغّل مرة واحدة في Railway Shell:
+
+```powershell
+npm run db:seed --workspace @take-and-go/api
+```
+
+تنشأ حسابات الإدارة من `ADMIN_PHONE` و`ADMIN_PASSWORD`، ولا يقبل seed كلمة المرور الافتراضية الموجودة في ملف المثال.
+
+## المحاسبة
+
+- كل القيم المالية محفوظة بوحدة الفلس الصحيحة لتجنب أخطاء الكسور العشرية.
+- تُحفظ العمولة وقت تسجيل رسالة الطلب؛ تغيير التسعيرة يؤثر في الطلبات الجديدة فقط.
+- عمليات الخصم والشحن تُسجل في دفتر الحركات ضمن معاملات قاعدة البيانات.
+- يخصم النظام أرضية المجموعة يوم الخميس 23:59 بتوقيت `Asia/Amman` من حسابات الكباتن المفعّلة. لكل أسبوع مفتاح فريد لمنع الخصم المكرر عند إعادة تشغيل الخدمة.
+- شحن الرصيد يدوي من لوحة الإدارة، ويظهر في سجل الكابتن والأدمن.
