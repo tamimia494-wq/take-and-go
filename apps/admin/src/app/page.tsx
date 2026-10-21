@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowDownLeft, ArrowUpLeft, BadgeCheck, CircleDollarSign, LogOut, RefreshCw, Settings2, ShieldCheck, UserRoundPlus, Users, Wallet } from "lucide-react";
+import { ArrowDownLeft, ArrowUpLeft, BadgeCheck, CircleDollarSign, KeyRound, LogOut, RefreshCw, Settings2, ShieldCheck, UserRoundPlus, Users, Wallet } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
 
@@ -31,6 +31,7 @@ export default function AdminHome() {
   const [settings, setSettings] = useState<Settings>({ groupFloorJod: 0, riderCommissionPerFiveJod: 0.75, orderCommissionPerFiveJod: 1 });
   const [selected, setSelected] = useState<Captain | null>(null);
   const [query, setQuery] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
 
   const refresh = useCallback(async (authToken: string) => {
     const [home, list] = await Promise.all([
@@ -146,6 +147,27 @@ export default function AdminHome() {
     }
   }
 
+  async function changePassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setNotice("");
+    const form = new FormData(event.currentTarget);
+    try {
+      await api("/admin/password", token, {
+        method: "POST",
+        body: JSON.stringify({ currentPassword: form.get("currentPassword"), newPassword: form.get("newPassword") })
+      });
+      setNotice("تم تغيير كلمة مرور الإدارة بنجاح.");
+      event.currentTarget.reset();
+      setShowPassword(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تغيير كلمة المرور.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function logout() {
     window.localStorage.removeItem("take-go-admin-token");
     setToken("");
@@ -191,8 +213,21 @@ export default function AdminHome() {
       <div className="admin-main">
         <div className="heading">
           <div><p className="eyebrow">مساحة العمل</p><h1>مرحباً بك في لوحة الإدارة</h1><p className="muted">إدارة الكباتن والأرصدة والرسوم من مكان واحد.</p></div>
-          <button className="button ghost refresh" onClick={() => void refresh(token)}><RefreshCw size={16} /> تحديث البيانات</button>
+          <div className="heading-actions">
+            <button className="button ghost refresh" onClick={() => void refresh(token)}><RefreshCw size={16} /> تحديث البيانات</button>
+            <button className="button ghost" onClick={() => setShowPassword((value) => !value)}><KeyRound size={16} /> تغيير كلمة المرور</button>
+          </div>
         </div>
+        {showPassword && (
+          <form className="panel password-panel" onSubmit={changePassword}>
+            <div className="panel-heading compact"><span className="panel-icon"><KeyRound size={19} /></span><div><h2>تغيير كلمة مرور الإدارة</h2><p>أدخل كلمة المرور الحالية ثم كلمة المرور الجديدة</p></div></div>
+            <div className="password-fields">
+              <input name="currentPassword" type="password" placeholder="كلمة المرور الحالية" autoComplete="current-password" required />
+              <input name="newPassword" type="password" placeholder="كلمة المرور الجديدة (6 أحرف على الأقل)" autoComplete="new-password" minLength={6} required />
+            </div>
+            <button className="button primary" disabled={busy}><ShieldCheck size={16} /> تأكيد التغيير</button>
+          </form>
+        )}
         {error && <p className="error" role="alert">{error}</p>}
         {notice && <p className="notice" role="status">{notice}</p>}
         <section className="metric-grid">

@@ -218,3 +218,22 @@ router.put("/admin/settings", requireAuth("admin"), async (req, res) => {
     res.status(400).json({ error: error instanceof Error ? error.message : "قيمة مالية غير صالحة." });
   }
 });
+
+router.post("/admin/password", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({
+    currentPassword: z.string().min(1).max(128),
+    newPassword: z.string().min(6).max(128)
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل." });
+    return;
+  }
+  const admin = await prisma.admin.findUnique({ where: { id: "admin" } });
+  if (!admin || !(await bcrypt.compare(parsed.data.currentPassword, admin.passwordHash))) {
+    res.status(401).json({ error: "كلمة المرور الحالية غير صحيحة." });
+    return;
+  }
+  const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+  await prisma.admin.update({ where: { id: "admin" }, data: { passwordHash } });
+  res.json({ ok: true });
+});
