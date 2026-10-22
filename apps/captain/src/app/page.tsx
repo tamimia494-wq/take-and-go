@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { ArrowDownLeft, ArrowUpLeft, CarFront, Clock3, LogOut, ShieldCheck, Wallet } from "lucide-react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
+const API = API_URL.endsWith("/api") ? API_URL : `${API_URL.replace(/\/$/, "")}/api`;
 
 type LedgerEntry = {
   id: string;
