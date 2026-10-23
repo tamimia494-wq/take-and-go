@@ -56,7 +56,7 @@
 2. في [Render](https://dashboard.render.com) → **New → Blueprint** → اختر المستودع → **Apply**. سيطلب Render القيم السرية المعرفة في Blueprint؛ أدخلها لخدمة `take-and-go-api` ولا تحفظها في Git.
 3. في خدمة `take-and-go-api` → **Environment**، اضبط `ADMIN_PASSWORD` وكلاً من `GREEN_API_INSTANCE_ID`, `GREEN_API_TOKEN`, و`GREEN_API_GROUP_ID` باستخدام القيم الحقيقية من لوحة Green API. يمكن كتابة معرّف المجموعة بصيغة `...@g.us` أو الأرقام فقط. اضغط **Save, rebuild, and deploy** لتطبيق الإعدادات.
 4. لتفعيل Webhook للرسائل الواردة، اضبط `GREEN_API_WEBHOOK_TOKEN` على سر عشوائي، واستخدم السر نفسه في ترويسة `Authorization` لإعداد Webhook في Green API. استخدم العنوان `https://<api-domain>/webhooks/green-api` وفعّل `incomingWebhook`.
-5. بعد النشر، من لوحة الإدارة اضغط **فحص اتصال Green API**. يجب أن تكون حالة Instance هي `authorized` وأن تظهر المجموعة وعدد المشاركين. إذا استمر خطأ الإعداد، راجع المتغيرات في Environment وأعد نشر خدمة API.
+5. بعد النشر، من لوحة الإدارة اضغط **فحص اتصال Green API**. يجب أن تظهر حالة Instance كـ `authorized` وأن تظهر المجموعة وعدد المشاركين. إذا استمر خطأ الإعداد، راجع المتغيرات في Environment وأعد نشر خدمة API.
 
 ## النشر (مزوّدون آخرون)
 
