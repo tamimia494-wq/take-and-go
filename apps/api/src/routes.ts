@@ -4,7 +4,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { adminLogin, captainLogin, requireAuth } from "./auth";
 import { prisma } from "./db";
-import { fromFils, toFils } from "./money";
+import { fromFils, normalizePhone, toFils } from "./money";
 import { importGroupCaptains } from "./whatsapp";
 
 export const router = Router();
@@ -164,6 +164,68 @@ router.post("/admin/captains/:id/balance", requireAuth("admin"), async (req, res
     return updated;
   });
   res.json({ balanceJod: fromFils(result.balanceFils) });
+});
+
+router.post("/admin/captains/adjust", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({
+    phone: z.union([z.string(), z.number()]),
+    amount: z.union([z.string(), z.number()]),
+    action: z.enum(["credit", "debit"]).default("credit"),
+    description: z.string().trim().min(2).max(160)
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "أدخل رقم الهاتف والمبلغ والوصف." });
+    return;
+  }
+  let amountFils: number;
+  try {
+    amountFils = toFils(parsed.data.amount);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "المبلغ غير صالح." });
+    return;
+  }
+  if (amountFils <= 0) {
+    res.status(400).json({ error: "يجب أن يكون المبلغ أكبر من صفر." });
+    return;
+  }
+  let phone: string;
+  try {
+    phone = normalizePhone(String(parsed.data.phone));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "رقم الهاتف غير صالح." });
+    return;
+  }
+  const credit = parsed.data.action !== "debit";
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const captain = await tx.captain.findUnique({ where: { phone } });
+      if (!captain) throw new Error("لا يوجد كابتن بهذا الرقم.");
+      if (!credit && captain.balanceFils < amountFils) {
+        throw new Error(`الرصيد غير كافٍ. الرصيد الحالي: ${fromFils(captain.balanceFils)} د.أ.`);
+      }
+      const updated = await tx.captain.update({
+        where: { id: captain.id },
+        data: { balanceFils: credit ? { increment: amountFils } : { decrement: amountFils } }
+      });
+      await tx.ledgerEntry.create({
+        data: {
+          captainId: captain.id,
+          type: credit ? LedgerType.CREDIT : LedgerType.ADJUSTMENT,
+          amountFils,
+          balanceAfterFils: updated.balanceFils,
+          description: parsed.data.description
+        }
+      });
+      return { captain, updated };
+    });
+    res.json({
+      fullName: result.captain.fullName,
+      phone: result.captain.phone,
+      balanceJod: fromFils(result.updated.balanceFils)
+    });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "تعذر تنفيذ العملية." });
+  }
 });
 
 router.patch("/admin/captains/:id/status", requireAuth("admin"), async (req, res) => {

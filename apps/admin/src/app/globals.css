@@ -111,6 +111,10 @@ td:first-child strong { font-weight: 600; }
 .row-actions { display: flex; gap: 5px; }
 .button.small { padding: 7px 8px; font-size: 9px; }
 .button.credit { color: #176be8; background: #edf4ff; }
+.button.debit { color: #b42318; background: #fee4e2; }
+.adjust-toggle { display: flex; gap: 8px; }
+.metric-card.clickable { cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; }
+.metric-card.clickable:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(23,107,232,.12); }
 .credit-form { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 14px 0; padding: 12px; background: #f7faff; border: 1px solid #e5edfa; border-radius: 10px; }
 .credit-form div { display: grid; gap: 4px; min-width: 180px; margin-left: auto; font-size: 10px; }
 .credit-form div span { color: #8b97aa; font-size: 9px; }

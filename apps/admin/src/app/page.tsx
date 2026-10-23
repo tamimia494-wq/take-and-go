@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowDownLeft, ArrowUpLeft, BadgeCheck, CircleDollarSign, KeyRound, LogOut, RefreshCw, Settings2, ShieldCheck, UserRoundPlus, Users, Wallet } from "lucide-react";
+import { ArrowDownLeft, ArrowUpLeft, BadgeCheck, CircleDollarSign, KeyRound, LogOut, RefreshCw, Settings2, ShieldCheck, UserRoundPlus, Users } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
 const API = API_URL.endsWith("/api") ? API_URL : `${API_URL.replace(/\/$/, "")}/api`;
@@ -30,7 +30,9 @@ export default function AdminHome() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [captains, setCaptains] = useState<Captain[]>([]);
   const [settings, setSettings] = useState<Settings>({ groupFloorJod: 0, riderCommissionPerFiveJod: 0.75, orderCommissionPerFiveJod: 1 });
-  const [selected, setSelected] = useState<Captain | null>(null);
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjustAction, setAdjustAction] = useState<"credit" | "debit">("credit");
+  const [adjustCaptain, setAdjustCaptain] = useState<Captain | null>(null);
   const [query, setQuery] = useState("");
   const [showPassword, setShowPassword] = useState(false);
 
@@ -124,22 +126,44 @@ export default function AdminHome() {
     }
   }
 
-  async function credit(event: React.FormEvent<HTMLFormElement>) {
+  function lookupPhone(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!selected) return;
+    setError("");
+    setNotice("");
+    setAdjustCaptain(null);
+    const form = new FormData(event.currentTarget);
+    const raw = String(form.get("phone") ?? "").replace(/\D/g, "");
+    const last9 = raw.slice(-9);
+    const found = captains.find((captain) => captain.phone.replace(/\D/g, "").endsWith(last9) && last9.length >= 9);
+    if (!found) {
+      setError("لا يوجد كابتن بهذا الرقم. تأكد من الرقم أو اعمل مزامنة للمجموعة أولاً.");
+      return;
+    }
+    setAdjustCaptain(found);
+  }
+
+  async function adjustBalance(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!adjustCaptain) return;
     setBusy(true);
     setError("");
     const form = new FormData(event.currentTarget);
     try {
-      await api(`/admin/captains/${selected.id}/balance`, token, {
+      const result = await api<{ fullName: string | null; phone: string; balanceJod: number }>("/admin/captains/adjust", token, {
         method: "POST",
-        body: JSON.stringify({ amount: form.get("amount"), description: form.get("description") })
+        body: JSON.stringify({
+          phone: adjustCaptain.phone,
+          amount: form.get("amount"),
+          action: adjustAction,
+          description: form.get("description")
+        })
       });
-      setNotice(`تم شحن رصيد ${selected.fullName ?? selected.phone}.`);
-      setSelected(null);
+      setNotice(`${adjustAction === "credit" ? "تم شحن" : "تم خصم"} ${money(Number(form.get("amount")))} د.أ ${adjustAction === "credit" ? "على" : "من"} حساب ${result.fullName ?? result.phone}. الرصيد الجديد: ${money(result.balanceJod)} د.أ`);
+      setAdjustCaptain(null);
+      setAdjustOpen(false);
       await refresh(token);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر شحن الرصيد.");
+      setError(reason instanceof Error ? reason.message : "تعذر تنفيذ العملية.");
     } finally {
       setBusy(false);
     }
@@ -244,7 +268,7 @@ export default function AdminHome() {
         {notice && <p className="notice" role="status">{notice}</p>}
         <section className="metric-grid">
           <Metric icon={<Users size={20} />} label="إجمالي الكباتن" value={overview?.captainCount ?? 0} color="blue" detail={`${overview?.activeCaptainCount ?? 0} حساب مفعل`} />
-          <Metric icon={<Wallet size={20} />} label="أرصدة الكباتن" value={`${money(overview?.totalBalanceJod ?? 0)} د.أ`} color="violet" detail="إجمالي الأرصدة الحالية" />
+          <Metric icon={<CircleDollarSign size={20} />} label="شحن رصيد للكابتن" value="فتح النموذج" color="violet" detail="حسب رقم الهاتف" onClick={() => { setAdjustOpen(true); setAdjustCaptain(null); }} />
           <Metric icon={<BadgeCheck size={20} />} label="حالة التكامل" value="Green API" color="green" detail="ربط مجموعة واتساب" />
         </section>
         <section className="admin-grid">
@@ -269,14 +293,29 @@ export default function AdminHome() {
         </section>
         <section className="panel captains-panel">
           <div className="list-heading"><div className="panel-heading compact"><span className="panel-icon"><Users size={19} /></span><div><h2>إدارة الكباتن</h2><p>{captains.length} حساب مسجل</p></div></div><input className="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="بحث بالاسم أو الهاتف" /></div>
-          {selected && (
-            <form className="credit-form" onSubmit={credit}>
-              <div><strong>شحن رصيد: {selected.fullName ?? selected.phone}</strong><span>الرصيد الحالي: {money(selected.balanceJod)} د.أ</span></div>
-              <input name="amount" type="number" min="0.001" step="0.001" placeholder="المبلغ بالدينار" required />
-              <input name="description" type="text" maxLength={160} placeholder="سبب الشحن (مثال: شحن نقدي)" required />
-              <button className="button primary" disabled={busy}><CircleDollarSign size={16} /> اعتماد الشحن</button>
-              <button type="button" className="button ghost" onClick={() => setSelected(null)}>إلغاء</button>
-            </form>
+          {adjustOpen && (
+            <div className="credit-form">
+              {!adjustCaptain ? (
+                <form onSubmit={lookupPhone}>
+                  <div><strong>شحن/خصم رصيد</strong><span>أدخل رقم كابتن لعرض حسابه</span></div>
+                  <input name="phone" type="tel" dir="ltr" placeholder="رقم الهاتف (مثال: 079xxxxxxx)" required />
+                  <button className="button primary" disabled={busy}>بحث</button>
+                  <button type="button" className="button ghost" onClick={() => setAdjustOpen(false)}>إلغاء</button>
+                </form>
+              ) : (
+                <form onSubmit={adjustBalance}>
+                  <div><strong>{adjustCaptain.fullName ?? "بانتظار تفعيل الحساب"} · {adjustCaptain.phone}</strong><span>الرصيد الحالي: {money(adjustCaptain.balanceJod)} د.أ</span></div>
+                  <div className="adjust-toggle">
+                    <button type="button" className={adjustAction === "credit" ? "button small credit" : "button small ghost"} onClick={() => setAdjustAction("credit")}><CircleDollarSign size={14} /> شحن</button>
+                    <button type="button" className={adjustAction === "debit" ? "button small debit" : "button small ghost"} onClick={() => setAdjustAction("debit")}><ArrowUpLeft size={14} /> خصم</button>
+                  </div>
+                  <input name="amount" type="number" min="0.001" step="0.001" placeholder={adjustAction === "credit" ? "قيمة الشحن بالدينار" : "قيمة الخصم بالدينار"} required />
+                  <input name="description" type="text" maxLength={160} placeholder={adjustAction === "credit" ? "سبب الشحن (مثال: شحن نقدي)" : "سبب الخصم (مثال: سحب نقدي)"} required />
+                  <button className="button primary" disabled={busy}><CircleDollarSign size={16} /> {adjustAction === "credit" ? "اعتماد الشحن" : "اعتماد الخصم"}</button>
+                  <button type="button" className="button ghost" onClick={() => setAdjustCaptain(null)}>رجوع</button>
+                </form>
+              )}
+            </div>
           )}
           <div className="table-wrap">
             <table><thead><tr><th>الكابتن</th><th>رقم الهاتف</th><th>الرصيد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
@@ -286,7 +325,7 @@ export default function AdminHome() {
                   <td dir="ltr">{captain.phone}</td>
                   <td className="money-cell">{money(captain.balanceJod)} د.أ</td>
                   <td><span className={`status-pill ${captain.status.toLowerCase()}`}>{statusLabel(captain.status)}</span></td>
-                  <td><div className="row-actions"><button className="button small credit" onClick={() => setSelected(captain)}><CircleDollarSign size={14} /> شحن</button><button className="button small ghost" disabled={busy} onClick={() => void toggleStatus(captain)}>{captain.status === "SUSPENDED" ? "تفعيل" : "إيقاف"}</button></div></td>
+                  <td><div className="row-actions"><button className="button small credit" onClick={() => { setAdjustOpen(true); setAdjustAction("credit"); setAdjustCaptain(captain); }}><CircleDollarSign size={14} /> شحن</button><button className="button small ghost" disabled={busy} onClick={() => void toggleStatus(captain)}>{captain.status === "SUSPENDED" ? "تفعيل" : "إيقاف"}</button></div></td>
                 </tr>
               ))}</tbody>
             </table>
@@ -305,8 +344,8 @@ export default function AdminHome() {
   );
 }
 
-function Metric({ icon, label, value, color, detail }: { icon: React.ReactNode; label: string; value: string | number; color: string; detail: string }) {
-  return <article className="metric-card"><span className={`metric-icon ${color}`}>{icon}</span><span className="metric-label">{label}</span><strong>{value}</strong><small>{detail}</small></article>;
+function Metric({ icon, label, value, color, detail, onClick }: { icon: React.ReactNode; label: string; value: string | number; color: string; detail: string; onClick?: () => void }) {
+  return <article className={onClick ? "metric-card clickable" : "metric-card"} onClick={onClick} role={onClick ? "button" : undefined}><span className={`metric-icon ${color}`}>{icon}</span><span className="metric-label">{label}</span><strong>{value}</strong><small>{detail}</small></article>;
 }
 
 function MoneyInput({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
