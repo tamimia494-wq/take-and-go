@@ -28,6 +28,14 @@ services:
         generateValue: true
       - key: ADMIN_PASSWORD
         sync: false
+      - key: GREEN_API_INSTANCE_ID
+        sync: false
+      - key: GREEN_API_TOKEN
+        sync: false
+      - key: GREEN_API_GROUP_ID
+        sync: false
+      - key: GREEN_API_WEBHOOK_TOKEN
+        sync: false
       - key: CAPTAIN_APP_URL
         fromService:
           type: web
