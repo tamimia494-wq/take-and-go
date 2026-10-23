@@ -12,23 +12,14 @@ function required(name: string): string {
 
 const greenApiGroupId = process.env.GREEN_API_GROUP_ID;
 
-// Demo/fallback credentials so Green API works even before the user sets env vars.
-// Replace these with real values from your Green API console (or keep the env vars).
-const DEMO_GREEN_API = {
-  instanceId: process.env.GREEN_API_INSTANCE_ID ?? "",
-  token: process.env.GREEN_API_TOKEN ?? "",
-  groupId: process.env.GREEN_API_GROUP_ID ?? "",
-  webhookToken: process.env.GREEN_API_WEBHOOK_TOKEN ?? ""
-};
-
 export const config = {
   port: Number(process.env.PORT ?? process.env.API_PORT ?? 4000),
   databaseUrl: required("DATABASE_URL"),
   jwtSecret: required("JWT_SECRET"),
-  webhookToken: DEMO_GREEN_API.webhookToken || undefined,
+  webhookToken: process.env.GREEN_API_WEBHOOK_TOKEN || undefined,
   greenApiUrl: (process.env.GREEN_API_URL ?? "https://api.green-api.com").replace(/\/$/, ""),
-  greenApiInstanceId: DEMO_GREEN_API.instanceId || undefined,
-  greenApiToken: DEMO_GREEN_API.token || undefined,
+  greenApiInstanceId: process.env.GREEN_API_INSTANCE_ID || undefined,
+  greenApiToken: process.env.GREEN_API_TOKEN || undefined,
   greenApiGroupId: greenApiGroupId && /^\d+$/.test(greenApiGroupId)
     ? `${greenApiGroupId}@g.us`
     : greenApiGroupId,
