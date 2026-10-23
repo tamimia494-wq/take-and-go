@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { phoneFromChatId } from "./money";
 
 type GreenApiResponse = Record<string, unknown>;
 
@@ -40,6 +41,12 @@ export async function greenApiRequest<T extends GreenApiResponse>(
     throw new Error("Green API returned an unexpected response.");
   }
   return data as T;
+}
+
+export async function getInstancePhone(): Promise<string | null> {
+  const data = await greenApiRequest<{ phone?: string; phoneNumber?: string }>("getWaSettings");
+  const raw = data.phone ?? data.phoneNumber ?? "";
+  return raw ? phoneFromChatId(raw) : null;
 }
 
 export async function sendGroupMessage(message: string): Promise<void> {

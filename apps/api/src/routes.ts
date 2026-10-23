@@ -6,6 +6,8 @@ import { adminLogin, captainLogin, requireAuth } from "./auth";
 import { prisma } from "./db";
 import { fromFils, normalizePhone, toFils } from "./money";
 import { importGroupCaptains } from "./whatsapp";
+import { greenApiRequest } from "./green-api";
+import { config } from "./config";
 
 export const router = Router();
 
@@ -110,9 +112,39 @@ router.get("/admin/captains", requireAuth("admin"), async (_req, res) => {
   res.json(captains.map((captain) => ({ ...captain, balanceJod: fromFils(captain.balanceFils) })));
 });
 
-router.post("/admin/captains/import", requireAuth("admin"), async (_req, res) => {
+router.get("/admin/green-api/diagnose", requireAuth("admin"), async (_req, res) => {
+  const configured = Boolean(config.greenApiInstanceId && config.greenApiToken && config.greenApiGroupId);
+  const result: Record<string, unknown> = {
+    configured,
+    instanceId: config.greenApiInstanceId ?? null,
+    groupId: config.greenApiGroupId ?? null
+  };
+  if (!configured) {
+    res.status(400).json({ error: "متغيرات Green API غير مضبوطة على الخادم (Instance ID / Token / Group ID).", ...result });
+    return;
+  }
   try {
-    res.json(await importGroupCaptains());
+    const settings = await greenApiRequest<{ stateInstance?: string; phone?: string; errorMessage?: string }>("getWaSettings");
+    result.instanceState = settings.stateInstance ?? settings.errorMessage ?? "unknown";
+    result.instancePhone = settings.phone ?? null;
+    result.authorized = settings.stateInstance === "authorized";
+  } catch (error) {
+    result.instanceError = error instanceof Error ? error.message : String(error);
+  }
+  try {
+    const data = await greenApiRequest<{ participants?: unknown[] }>("getGroupData", { groupId: config.greenApiGroupId });
+    result.groupFound = true;
+    result.participantCount = (data.participants ?? []).length;
+  } catch (error) {
+    result.groupError = error instanceof Error ? error.message : String(error);
+  }
+  res.json(result);
+});
+
+router.post("/admin/captains/import", requireAuth("admin"), async (req, res) => {
+  try {
+    const result = await importGroupCaptains();
+    res.json(result);
   } catch (error) {
     console.error("Group captain import failed:", error);
     res.status(502).json({

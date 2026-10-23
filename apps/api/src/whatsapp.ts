@@ -3,8 +3,8 @@ import { JobCategory, Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { config } from "./config";
 import { prisma } from "./db";
-import { deleteGroupMessage, getGroupParticipants, greenApiRequest, sendGroupMessage } from "./green-api";
-import { phoneFromChatId } from "./money";
+import { deleteGroupMessage, getInstancePhone, getGroupParticipants, greenApiRequest, sendGroupMessage } from "./green-api";
+import { normalizePhone, phoneFromChatId } from "./money";
 import { cancelChargedJob, processJobReaction } from "./accounting";
 
 type Webhook = {
@@ -14,19 +14,33 @@ type Webhook = {
   messageData?: Record<string, unknown>;
 };
 
-export async function importGroupCaptains(): Promise<{ imported: number; total: number }> {
+export async function importGroupCaptains(): Promise<{ imported: number; total: number; skipped: string[] }> {
   const participantIds = await getGroupParticipants();
   const phones = new Set<string>();
   for (const id of participantIds) {
     const phone = phoneFromChatId(id);
     if (phone) phones.add(phone);
   }
+
+  // استثناء رقم الـ Instance نفسه (صاحب الجروب/الإدارة) وأرقام الإدارة الإضافية
+  const excluded = new Set<string>();
+  const instancePhone = await getInstancePhone().catch(() => null);
+  if (instancePhone) excluded.add(instancePhone);
+  for (const raw of config.excludedAdminPhones) {
+    try {
+      excluded.add(normalizePhone(raw));
+    } catch {
+      // تجاهل القيم غير الصالحة في متغير البيئة
+    }
+  }
+  for (const phone of excluded) phones.delete(phone);
+
   const passwordHash = await bcrypt.hash("123456", 12);
   const created = await prisma.captain.createMany({
     data: [...phones].map((phone) => ({ phone, passwordHash })),
     skipDuplicates: true
   });
-  return { imported: created.count, total: phones.size };
+  return { imported: created.count, total: phones.size, skipped: [...excluded] };
 }
 
 export async function receiveGreenApiWebhook(req: Request, res: Response): Promise<void> {

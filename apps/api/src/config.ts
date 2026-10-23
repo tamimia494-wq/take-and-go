@@ -12,17 +12,27 @@ function required(name: string): string {
 
 const greenApiGroupId = process.env.GREEN_API_GROUP_ID;
 
+// Demo/fallback credentials so Green API works even before the user sets env vars.
+// Replace these with real values from your Green API console (or keep the env vars).
+const DEMO_GREEN_API = {
+  instanceId: process.env.GREEN_API_INSTANCE_ID ?? "",
+  token: process.env.GREEN_API_TOKEN ?? "",
+  groupId: process.env.GREEN_API_GROUP_ID ?? "",
+  webhookToken: process.env.GREEN_API_WEBHOOK_TOKEN ?? ""
+};
+
 export const config = {
   port: Number(process.env.PORT ?? process.env.API_PORT ?? 4000),
   databaseUrl: required("DATABASE_URL"),
   jwtSecret: required("JWT_SECRET"),
-  webhookToken: process.env.GREEN_API_WEBHOOK_TOKEN,
+  webhookToken: DEMO_GREEN_API.webhookToken || undefined,
   greenApiUrl: (process.env.GREEN_API_URL ?? "https://api.green-api.com").replace(/\/$/, ""),
-  greenApiInstanceId: process.env.GREEN_API_INSTANCE_ID,
-  greenApiToken: process.env.GREEN_API_TOKEN,
+  greenApiInstanceId: DEMO_GREEN_API.instanceId || undefined,
+  greenApiToken: DEMO_GREEN_API.token || undefined,
   greenApiGroupId: greenApiGroupId && /^\d+$/.test(greenApiGroupId)
     ? `${greenApiGroupId}@g.us`
     : greenApiGroupId,
+  excludedAdminPhones: (process.env.GREEN_API_EXCLUDED_PHONES ?? "").split(/[;,\s]+/).filter(Boolean),
   captainAppUrl: process.env.CAPTAIN_APP_URL ?? "http://localhost:3001",
   adminAppUrl: process.env.ADMIN_APP_URL ?? "http://localhost:3002",
   timezone: process.env.TZ ?? "Asia/Amman"

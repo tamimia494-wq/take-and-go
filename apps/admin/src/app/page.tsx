@@ -111,13 +111,39 @@ export default function AdminHome() {
     }
   }
 
+  async function diagnose() {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api<Record<string, unknown>>("/admin/green-api/diagnose", token);
+      const lines: string[] = [];
+      if (result.configured !== true) lines.push("⚠️ متغيرات Green API غير مضبوطة على الخادم.");
+      if (typeof result.instanceState === "string") {
+        lines.push(result.authorized === true
+          ? "✅ الـ Instance متصل بالواتساب."
+          : `❌ الـ Instance غير مرتبط بالواتساب (الحالة: ${result.instanceState}). امسح QR من لوحة Green API.`);
+      }
+      if (result.instanceError) lines.push(`❌ فشل الوصول للـ Instance: ${String(result.instanceError)}`);
+      if (typeof result.instancePhone === "string" && result.instancePhone) lines.push(`📱 رقم الـ Instance: ${result.instancePhone}`);
+      if (result.groupFound === true) lines.push(`✅ الجروب موجود وعدد المشاركين: ${String(result.participantCount)}.`);
+      if (result.groupError) lines.push(`❌ فشل قراءة الجروب: ${String(result.groupError)} — تأكد من GREEN_API_GROUP_ID.`);
+      setNotice(lines.join(" | ") || JSON.stringify(result));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تشخيص الاتصال.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function importCaptains() {
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const result = await api<{ imported: number; total: number }>("/admin/captains/import", token, { method: "POST" });
-      setNotice(`تمت إضافة ${result.imported} كابتن جديد من أصل ${result.total} مشارك. كلمة المرور المؤقتة: 123456`);
+    const result = await api<{ imported: number; total: number; skipped?: string[] }>("/admin/captains/import", token, { method: "POST" });
+    const skipped = result.skipped?.length ? ` (تم استثناء أرقام الإدارة: ${result.skipped.join(", ")})` : "";
+    setNotice(`تمت إضافة ${result.imported} كابتن جديد من أصل ${result.total} مشارك${skipped}. كلمة المرور المؤقتة: 123456`);
       await refresh(token);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذرت مزامنة المشاركين.");
@@ -287,6 +313,7 @@ export default function AdminHome() {
           <article className="panel import-panel">
             <div className="panel-heading"><span className="panel-icon blue"><UserRoundPlus size={19} /></span><div><h2>إضافة الكباتن</h2><p>استيراد المشاركين من مجموعة Green API المحددة</p></div></div>
             <div className="import-visual"><div className="avatar-stack"><span>ك</span><span>ر</span><span>م</span><b>+</b></div><span>إضافة آمنة للمجموعة المحددة <span className="flag-small">🇯🇴</span></span></div>
+            <button className="button ghost full" disabled={busy} onClick={() => void diagnose()}><BadgeCheck size={17} /> فحص اتصال Green API</button>
             <button className="button primary full" disabled={busy} onClick={() => void importCaptains()}><UserRoundPlus size={17} /> {busy ? "جارٍ الاستيراد..." : "مزامنة أعضاء المجموعة"}</button>
             <p className="hint">الحسابات الجديدة تبدأ بكلمة مرور مؤقتة <bdi>123456</bdi> ورصيد صفر، وتحتاج إدخال الاسم عند أول دخول.</p>
           </article>

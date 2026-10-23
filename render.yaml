@@ -27,15 +27,18 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: ADMIN_PASSWORD
-        sync: false
+        value: "Take&go911"
+      # ==== Green API (تجريبي) — بدّل PLACEHOLDER بالقيم من console.green-api.com ====
       - key: GREEN_API_INSTANCE_ID
-        sync: false
+        value: "GREEN_API_INSTANCE_ID_PLACEHOLDER"
       - key: GREEN_API_TOKEN
-        sync: false
+        value: "GREEN_API_TOKEN_PLACEHOLDER"
       - key: GREEN_API_GROUP_ID
-        sync: false
+        value: "GREEN_API_GROUP_ID_PLACEHOLDER"
       - key: GREEN_API_WEBHOOK_TOKEN
-        sync: false
+        value: "take-and-go-demo-webhook-token"
+      - key: GREEN_API_EXCLUDED_PHONES
+        value: ""
       - key: CAPTAIN_APP_URL
         fromService:
           type: web
