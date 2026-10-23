@@ -122,6 +122,14 @@ model WhatsAppReply {
   captain        Captain?     @relation(fields: [captainId], references: [id])
 }
 
+model PaymentMethod {
+  id          String   @id @default(cuid())
+  label       String
+  details     String
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
 model WeeklyFloorCharge {
   id          String   @id @default(cuid())
   weekKey     String   @unique
