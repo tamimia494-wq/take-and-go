@@ -13,7 +13,8 @@ const allowedOrigins = [config.captainAppUrl, config.adminAppUrl];
 
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    const isRenderOrigin = origin?.endsWith(".onrender.com");
+    if (!origin || allowedOrigins.includes(origin) || isRenderOrigin) {
       callback(null, true);
       return;
     }

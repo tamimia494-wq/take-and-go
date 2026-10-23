@@ -75,19 +75,30 @@ export default function CaptainHome() {
     setError("");
     const form = new FormData(event.currentTarget);
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 60000);
       const response = await fetch(`${API}/auth/captain/login`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ phone: form.get("phone"), password: form.get("password") })
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error ?? "تعذر تسجيل الدخول.");
+        body: JSON.stringify({ phone: form.get("phone"), password: form.get("password") }),
+        signal: controller.signal
+      }).finally(() => clearTimeout(timeout));
+      let data: { error?: string; token?: string; needsProfile?: boolean } = {};
+      try { data = await response.json(); } catch { /* رد غير JSON */ }
+      if (!response.ok) throw new Error(data.error ?? `خطأ من الخادم (HTTP ${response.status}).`);
+      if (!data.token) throw new Error("رد غير متوقع من الخادم.");
       window.localStorage.setItem("take-go-captain-token", data.token);
       setToken(data.token);
-      setNeedsProfile(data.needsProfile);
+      setNeedsProfile(Boolean(data.needsProfile));
       if (!data.needsProfile) await loadDashboard(data.token);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر تسجيل الدخول.");
+      if (reason instanceof TypeError) {
+        setError((reason as Error).name === "AbortError"
+          ? "انتهت مهلة الاتصال بالخادم. الـ API قد يكون نائماً أو غير متاح — أعد المحاولة بعد دقيقة."
+          : "تعذر الاتصال بالخادم. تأكد أن الـ API يعمل (قد يكون نائماً على الخطة المجانية — أعد المحاولة بعد دقيقة).");
+      } else {
+        setError(reason instanceof Error ? reason.message : "تعذر تسجيل الدخول.");
+      }
     } finally {
       setBusy(false);
       setLoading(false);
