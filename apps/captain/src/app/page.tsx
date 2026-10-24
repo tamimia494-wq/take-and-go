@@ -278,17 +278,17 @@ export default function CaptainHome() {
           <div className="balance-copy"><span className="balance-icon"><Wallet size={22} /></span><span>رصيدك الحالي</span></div>
           <p className="balance-value">{money(dashboard?.balanceJod ?? 0)} <small>د.أ</small></p>
           <span className="balance-footnote">يتم تحديث الرصيد بعد اعتماد الطلبات</span>
-          <button
-            type="button"
-            className="topup-button"
-            aria-expanded={topUpOpen}
-            aria-controls="topup-form"
-            onClick={() => { setTopUpOpen((open) => !open); setNotice(""); }}
-          >
-            <CircleDollarSign size={18} /> {topUpOpen ? "إغلاق نموذج الشحن" : "شحن رصيد"}
-          </button>
           <div className="balance-decoration">T</div>
         </section>
+        <button
+          type="button"
+          className="topup-button"
+          aria-expanded={topUpOpen}
+          aria-controls="topup-form"
+          onClick={() => { setTopUpOpen((open) => !open); setNotice(""); }}
+        >
+          <CircleDollarSign size={18} /> {topUpOpen ? "إغلاق نموذج الشحن" : "شحن رصيد"}
+        </button>
         {topUpOpen && (
           <form id="topup-form" className="topup-card" onSubmit={submitTopUp}>
             <strong>طلب شحن رصيد</strong>
