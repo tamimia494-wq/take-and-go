@@ -278,13 +278,19 @@ export default function CaptainHome() {
           <div className="balance-copy"><span className="balance-icon"><Wallet size={22} /></span><span>رصيدك الحالي</span></div>
           <p className="balance-value">{money(dashboard?.balanceJod ?? 0)} <small>د.أ</small></p>
           <span className="balance-footnote">يتم تحديث الرصيد بعد اعتماد الطلبات</span>
-          <button type="button" className="topup-button" onClick={() => { setTopUpOpen((open) => !open); setNotice(""); }}>
+          <button
+            type="button"
+            className="topup-button"
+            aria-expanded={topUpOpen}
+            aria-controls="topup-form"
+            onClick={() => { setTopUpOpen((open) => !open); setNotice(""); }}
+          >
             <CircleDollarSign size={18} /> {topUpOpen ? "إغلاق نموذج الشحن" : "شحن رصيد"}
           </button>
           <div className="balance-decoration">T</div>
         </section>
         {topUpOpen && (
-          <form className="topup-card" onSubmit={submitTopUp}>
+          <form id="topup-form" className="topup-card" onSubmit={submitTopUp}>
             <strong>طلب شحن رصيد</strong>
             <span>أدخل المبلغ، حوّل المبلغ بإحدى طرق الدفع، ثم أرفق صورة الوصل لإرسال الطلب إلى لوحة الإدارة. صورة الوصل مطلوبة ولا يمكن إرسال الطلب بدونها (حد أقصى 4 ميغابايت).</span>
             <input name="amount" type="number" min="0.001" step="0.001" placeholder="مبلغ الشحن بالدينار" required />
