@@ -4,7 +4,7 @@ import type { Request, Response } from "express";
 import { config } from "./config";
 import { prisma } from "./db";
 import { deleteGroupMessage, getInstancePhone, getGroupParticipants, greenApiRequest, sendGroupMessage } from "./green-api";
-import { normalizePhone, phoneFromChatId } from "./money";
+import { hasSufficientCaptainReplyBalance, normalizePhone, phoneFromChatId } from "./money";
 import { cancelChargedJob, processJobReaction } from "./accounting";
 import { calculateCommissionFils, extractPriceAfterLabel } from "./pricing";
 
@@ -108,7 +108,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     });
     const rejection = !captain || captain.status !== "ACTIVE"
       ? "unregistered"
-      : captain.balanceFils < Math.max(job.commissionFils, 750) ? "insufficient" : null;
+      : !hasSufficientCaptainReplyBalance(captain.balanceFils, job.commissionFils) ? "insufficient" : null;
     if (rejection) {
       const rejectedReply = await prisma.whatsAppReply.updateMany({
         where: { messageId, status: "PENDING" },

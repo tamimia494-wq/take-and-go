@@ -11,6 +11,12 @@ export function fromFils(fils: number): number {
   return fils / 1000;
 }
 
+export const MINIMUM_CAPTAIN_REPLY_BALANCE_FILS = 750;
+
+export function hasSufficientCaptainReplyBalance(balanceFils: number, commissionFils: number): boolean {
+  return balanceFils >= Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, commissionFils);
+}
+
 export function normalizePhone(value: string): string {
   let digits = value.replace(/\D/g, "");
   if (digits.startsWith("00")) digits = digits.slice(2);

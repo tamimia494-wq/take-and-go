@@ -1,5 +1,6 @@
 import { JobCategory, JobStatus, LedgerType, Prisma, ReplyStatus } from "@prisma/client";
 import { prisma } from "./db";
+import { MINIMUM_CAPTAIN_REPLY_BALANCE_FILS } from "./money";
 
 type ProcessResult =
   | {
@@ -83,7 +84,10 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
     }
 
     const debited = await tx.captain.updateMany({
-      where: { id: reply.captain.id, balanceFils: { gte: Math.max(reply.job.commissionFils, 750) } },
+      where: {
+        id: reply.captain.id,
+        balanceFils: { gte: Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, reply.job.commissionFils) }
+      },
       data: { balanceFils: { decrement: reply.job.commissionFils } }
     });
     if (debited.count !== 1) {
