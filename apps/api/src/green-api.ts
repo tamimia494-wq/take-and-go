@@ -85,14 +85,24 @@ export async function resolveGroupSenderPhone(senderId: string): Promise<string 
     }>("getGroupData", { groupId });
     const phonesById = new Map<string, string>();
     for (const participant of data.participants ?? []) {
-      const phone = phoneFromChatId(participant.phoneNumber ?? participant.id ?? participant.participantId ?? "");
+      const identifiers = [participant.phoneNumber, participant.id, participant.participantId];
+      const phone = identifiers
+        .map((id) => id ? phoneFromChatId(id) : null)
+        .find((candidate): candidate is string => candidate !== null);
       if (!phone) continue;
       for (const id of [participant.id, participant.lid, participant.participantId, participant.phoneNumber]) {
-        if (id) phonesById.set(id.trim(), phone);
+        if (id) {
+          const normalizedId = id.trim();
+          phonesById.set(normalizedId, phone);
+          phonesById.set(normalizedId.split("@")[0], phone);
+        }
       }
     }
     cached = { expiresAt: Date.now() + GROUP_SENDER_CACHE_TTL_MS, phonesById };
     groupSenderCache.set(groupId, cached);
   }
-  return cached.phonesById.get(senderId.trim()) ?? null;
+  const normalizedSenderId = senderId.trim();
+  return cached.phonesById.get(normalizedSenderId) ??
+    cached.phonesById.get(normalizedSenderId.split("@")[0]) ??
+    null;
 }
