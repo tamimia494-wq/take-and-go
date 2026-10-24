@@ -239,7 +239,7 @@ export default function CaptainHome() {
             <button className="hero-button" disabled={busy}>{busy ? "جارٍ الدخول..." : "دخول"} <ArrowLeft size={18} /></button>
           </form>
         </div>
-        <footer className="hero-footer">Take &amp;go <span>·</span> معك في كل طريق<div className="footer-credit">تم تطويره بواسطة <b>Hamza rajeh</b> · <a href="tel:0790905611" dir="ltr">0790905611</a></div></footer>
+        <footer className="hero-footer">Take &amp;go <span>·</span> معك في كل طريق</footer>
       </main>
     );
   }
@@ -332,7 +332,7 @@ export default function CaptainHome() {
           </div>
         </section>
       </section>
-      <footer className="footer">Take &amp; Go <span>·</span> رحلتك .. علينا<div className="footer-credit">تم تطويره بواسطة <b>Hamza rajeh</b> · <a href="tel:0790905611" dir="ltr">0790905611</a></div></footer>
+      <footer className="footer">Take &amp; Go <span>·</span> رحلتك .. علينا</footer>
     </main>
   );
 }

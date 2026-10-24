@@ -163,6 +163,50 @@ td:first-child strong { font-weight: 600; }
 .footer-credit b { color: #1d2735; }
 .footer-credit a { color: var(--blue); text-decoration: none; font-weight: 600; }
 
+/* Match the signed-in admin workspace to the navy and gold login screen. */
+.admin-shell { color: #e8eef8; background: radial-gradient(ellipse at top, #17243b 0%, #0c1424 58%); }
+.admin-shell .admin-topbar { background: rgba(16,26,45,.96); border-color: #2a3650; }
+.admin-shell .admin-topbar .brand { color: #fff; }
+.admin-shell .admin-topbar .brand b { color: #f7b500; }
+.admin-shell .admin-topbar .brand-icon { color: #172237; background: #f7b500; box-shadow: 0 7px 20px rgba(247,181,0,.2); }
+.admin-shell .admin-topbar .brand-icon span { color: #fff; }
+.admin-shell .admin-label, .admin-shell .muted { color: #aebbd1; }
+.admin-shell .heading h1, .admin-shell .panel-heading h2 { color: #f4f7fb; }
+.admin-shell .eyebrow { color: #ffd23f; }
+.admin-shell .metric-card, .admin-shell .panel { color: #e8eef8; background: #182032; border-color: #2a3650; box-shadow: 0 14px 34px rgba(0,0,0,.12); }
+.admin-shell .metric-label, .admin-shell .metric-card small, .admin-shell .panel-heading p, .admin-shell .hint { color: #aebbd1; }
+.admin-shell .metric-icon.blue, .admin-shell .metric-icon.violet, .admin-shell .panel-icon, .admin-shell .panel-icon.blue, .admin-shell .panel-icon.violet { color: #ffd23f; background: rgba(247,181,0,.12); }
+.admin-shell input { color: #e8eef8; background: #161f33; border-color: #2e3b57; }
+.admin-shell input::placeholder { color: #8291aa; }
+.admin-shell input:focus, .admin-shell .password-fields input:focus { outline: none; border-color: #f7b500; box-shadow: 0 0 0 3px rgba(247,181,0,.14); }
+.admin-shell .button.primary, .admin-shell .button.credit { color: #1c2434; background: linear-gradient(100deg,#ffd23f,#f7b500); box-shadow: 0 8px 18px rgba(247,181,0,.16); }
+.admin-shell .button.ghost { color: #d4deec; background: #161f33; border-color: #2e3b57; }
+.admin-shell .import-visual { color: #c0cad9; background: linear-gradient(110deg,#1a263d,#202d47); border-color: #2e3b57; }
+.admin-shell .avatar-stack span, .admin-shell .avatar-stack b { border-color: #182032; }
+.admin-shell .avatar-stack span { color: #e8eef8; background: #34425e; }
+.admin-shell .avatar-stack span:nth-child(2) { background: #3a3152; color: #ded3ff; }
+.admin-shell .avatar-stack span:nth-child(3) { background: #244638; color: #b6f0d5; }
+.admin-shell .avatar-stack b { color: #172237; background: #f7b500; }
+.admin-shell th { color: #aebbd1; border-color: #2a3650; }
+.admin-shell td { color: #c0cad9; border-color: #2a3650; }
+.admin-shell td:first-child, .admin-shell .money-cell { color: #f4f7fb; }
+.admin-shell .captain-avatar { color: #ffd23f; background: rgba(247,181,0,.12); }
+.admin-shell .status-pill.active { color: #b6f0d5; background: rgba(48,183,123,.14); }
+.admin-shell .status-pill.pending_profile { color: #ffe29a; background: rgba(247,181,0,.12); }
+.admin-shell .status-pill.suspended { color: #ffb3bc; background: rgba(215,60,80,.14); }
+.admin-shell .button.debit, .admin-shell .button.small.debit { color: #ffb3bc; background: rgba(215,60,80,.14); border-color: rgba(215,60,80,.35); }
+.admin-shell .credit-form, .admin-shell .payment-method-row, .admin-shell .topup-admin-row { color: #e8eef8; background: #161f33; border-color: #2e3b57; }
+.admin-shell .credit-form div span, .admin-shell .payment-method-row span, .admin-shell .topup-admin-row span { color: #aebbd1; }
+.admin-shell .payment-method-row strong, .admin-shell .topup-admin-row strong { color: #f4f7fb; }
+.admin-shell .topup-receipt-preview { background: #161f33; border-color: #2e3b57; }
+.admin-shell .activity-row { border-color: #2a3650; }
+.admin-shell .activity-symbol.in { color: #b6f0d5; background: rgba(48,183,123,.14); }
+.admin-shell .activity-symbol.out { color: #ffb3bc; background: rgba(215,60,80,.14); }
+.admin-shell .activity-copy span, .admin-shell .empty { color: #aebbd1; }
+.admin-shell .positive { color: #8fddb9; }
+.admin-shell .negative { color: #ff9aa7; }
+.admin-shell .admin-footer { color: #8fa0bb; }
+
 @media(max-width:850px) {
   .admin-grid { grid-template-columns: 1fr; }
   .metric-grid { gap: 9px; }

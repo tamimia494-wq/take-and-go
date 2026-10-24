@@ -505,7 +505,7 @@ export default function AdminHome() {
           {!paymentMethods.length && <div className="empty">لا توجد طرق دفع مضافة بعد.</div>}
         </div>
       </section>
-      <footer className="admin-footer">Take &amp; Go <span>·</span> لوحة إدارة آمنة<div className="footer-credit">تم تطويره بواسطة <b>Hamza rajeh</b> · <a href="tel:0790905611" dir="ltr">0790905611</a></div></footer>
+      <footer className="admin-footer">Take &amp; Go <span>·</span> لوحة إدارة آمنة</footer>
     </main>
   );
 }
