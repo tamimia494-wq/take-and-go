@@ -393,7 +393,7 @@ export default function AdminHome() {
         {notice && <p className="notice" role="status">{notice}</p>}
         <section className="metric-grid">
           <Metric icon={<Users size={20} />} label="إجمالي الكباتن" value={overview?.captainCount ?? 0} color="blue" detail={`${overview?.activeCaptainCount ?? 0} حساب مفعل`} />
-          <Metric icon={<CircleDollarSign size={20} />} label="شحن رصيد للكابتن" value="فتح النموذج" color="violet" detail="حسب رقم الهاتف" onClick={() => { setShowCaptains(true); setAdjustOpen(true); setAdjustCaptain(null); }} />
+          <Metric icon={<CircleDollarSign size={20} />} label="شحن رصيد للكابتن" value="فتح النموذج" color="violet" detail="حسب رقم الهاتف" onClick={() => { setAdjustOpen(true); setAdjustCaptain(null); }} />
           <Metric icon={<BadgeCheck size={20} />} label="حالة التكامل" value="Green API" color="green" detail="ربط مجموعة واتساب" />
         </section>
         <section className="admin-grid">
