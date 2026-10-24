@@ -142,6 +142,63 @@ router.get("/admin/dashboard", requireAuth("admin"), async (_req, res) => {
   });
 });
 
+router.get("/admin/whatsapp-jobs/:id", requireAuth("admin"), async (req, res) => {
+  const jobId = req.params.id;
+  if (typeof jobId !== "string") {
+    res.status(400).json({ error: "معرّف الطلب غير صالح." });
+    return;
+  }
+
+  const [job, ledger] = await Promise.all([
+    prisma.whatsAppJob.findUnique({
+      where: { id: jobId },
+      include: {
+        replies: {
+          select: { messageId: true, senderPhone: true, status: true, createdAt: true }
+        }
+      }
+    }),
+    prisma.ledgerEntry.findMany({
+      where: { reference: jobId },
+      select: {
+        type: true,
+        amountFils: true,
+        description: true,
+        createdAt: true,
+        captain: { select: { fullName: true, phone: true } }
+      },
+      orderBy: { createdAt: "asc" }
+    })
+  ]);
+
+  if (!job) {
+    res.status(404).json({ error: "الطلب غير موجود." });
+    return;
+  }
+
+  res.json({
+    job: {
+      id: job.id,
+      sourceMessageId: job.sourceMessageId,
+      sourceSenderPhone: job.sourceSenderPhone,
+      priceDinars: job.priceDinars,
+      riderPriceDinars: job.riderPriceDinars,
+      orderPriceDinars: job.orderPriceDinars,
+      category: job.category,
+      commissionFils: job.commissionFils,
+      riderCommissionFils: job.riderCommissionFils,
+      orderCommissionFils: job.orderCommissionFils,
+      status: job.status,
+      createdAt: job.createdAt,
+      replies: job.replies
+    },
+    ledger: ledger.map((entry) => ({
+      ...entry,
+      amountJod: fromFils(entry.amountFils)
+    }))
+  });
+});
+
 router.get("/admin/captains", requireAuth("admin"), async (_req, res) => {
   const captains = await prisma.captain.findMany({
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
