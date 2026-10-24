@@ -1,3 +1,6 @@
+-- CreateEnum
+CREATE TYPE "TopUpStatus" AS ENUM ('PENDING', 'APPROVED', 'REJECTED');
+
 -- CreateTable
 CREATE TABLE "TopUpRequest" (
     "id" TEXT NOT NULL,
@@ -9,9 +12,6 @@ CREATE TABLE "TopUpRequest" (
 
     CONSTRAINT "TopUpRequest_pkey" PRIMARY KEY ("id")
 );
-
--- CreateEnum
-CREATE TYPE "TopUpStatus" AS ENUM ('PENDING', 'APPROVED', 'REJECTED');
 
 -- AddForeignKey
 ALTER TABLE "TopUpRequest" ADD CONSTRAINT "TopUpRequest_captainId_fkey" FOREIGN KEY ("captainId") REFERENCES "Captain"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
