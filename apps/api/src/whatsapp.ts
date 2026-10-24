@@ -300,8 +300,14 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     }
     if (result.result === "charged") {
       await sendGroupMessage(
-        `✅ تم اعتماد الطلب للكابتن. ${formatJobPrice(result.orderPriceDinars, result.riderPriceDinars)}. العمولة ${formatJod(result.amountFils)} د.أ. الرصيد المتبقي ${formatJod(result.balanceFils)} د.أ.`
+        `✅ تم اعتماد الطلب. تم خصم عمولة ${formatJod(result.amountFils)} د.أ من رصيد الكابتن، وإضافتها إلى رصيد صاحب الطلب. رصيد الكابتن بعد الخصم ${formatJod(result.balanceFils)} د.أ.`
       );
+      return;
+    }
+
+    if (result.result === "owner_unregistered") {
+      console.warn(`WhatsApp job reply ${targetMessageId} was not charged: the job owner has no captain account.`);
+      await sendGroupMessage("تعذر تحديد حساب صاحب الطلب، لذلك لم يتم خصم العمولة أو إضافتها لأي رصيد.");
       return;
     }
 

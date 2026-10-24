@@ -12,7 +12,7 @@ type ProcessResult =
       riderPriceDinars: number;
       orderPriceDinars: number;
     }
-  | { result: "insufficient" | "unregistered" | "already_processed" | "not_tracked"; amountFils: number; category?: JobCategory; priceDinars?: number };
+  | { result: "insufficient" | "unregistered" | "owner_unregistered" | "already_processed" | "not_tracked"; amountFils: number; category?: JobCategory; priceDinars?: number };
 
 type CancelResult =
   | {
@@ -47,6 +47,17 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
       });
       return {
         result: "unregistered",
+        amountFils: reply.job.commissionFils,
+        category: reply.job.category,
+        priceDinars: reply.job.priceDinars
+      };
+    }
+    const owner = reply.job.sourceSenderPhone
+      ? await tx.captain.findUnique({ where: { phone: reply.job.sourceSenderPhone } })
+      : null;
+    if (!owner) {
+      return {
+        result: "owner_unregistered",
         amountFils: reply.job.commissionFils,
         category: reply.job.category,
         priceDinars: reply.job.priceDinars
@@ -108,6 +119,10 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
     }
 
     const captain = await tx.captain.findUniqueOrThrow({ where: { id: reply.captain.id } });
+    const creditedOwner = await tx.captain.update({
+      where: { id: owner.id },
+      data: { balanceFils: { increment: reply.job.commissionFils } }
+    });
     const commissionEntries = [
       {
         type: LedgerType.RIDER_COMMISSION,
@@ -131,6 +146,17 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
         idempotencyKey: entry.idempotencyKey
       }))
     });
+    await tx.ledgerEntry.createMany({
+      data: commissionEntries.map((entry) => ({
+        captainId: owner.id,
+        type: entry.type,
+        amountFils: entry.amountFils,
+        balanceAfterFils: creditedOwner.balanceFils,
+        description: `عمولة مستلمة: ${describeJobPrice(reply.job.riderPriceDinars, reply.job.orderPriceDinars)}`,
+        reference: reply.job.id,
+        idempotencyKey: `job:${reply.job.id}:${entry.type.toLowerCase()}:owner`
+      }))
+    });
     await tx.whatsAppJob.update({
       where: { id: reply.jobId },
       data: { status: JobStatus.CHARGED }
@@ -146,7 +172,7 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
     return {
       result: "charged",
       amountFils: reply.job.commissionFils,
-      balanceFils: captain.balanceFils,
+      balanceFils: captain.id === creditedOwner.id ? creditedOwner.balanceFils : captain.balanceFils,
       category: reply.job.category,
       priceDinars: reply.job.priceDinars,
       riderPriceDinars: reply.job.riderPriceDinars,
@@ -170,6 +196,12 @@ export async function cancelChargedJob(replyMessageId: string, actorPhone: strin
     }
     if (!reply.captain || reply.status !== ReplyStatus.CHARGED) {
       throw new Error(`Charged WhatsApp job ${reply.jobId} has no charged captain reply.`);
+    }
+    const owner = reply.job.sourceSenderPhone
+      ? await tx.captain.findUnique({ where: { phone: reply.job.sourceSenderPhone } })
+      : null;
+    if (!owner) {
+      throw new Error(`Charged WhatsApp job ${reply.jobId} has no registered owner account to reverse the commission.`);
     }
 
     const canceled = await tx.whatsAppJob.updateMany({
@@ -207,10 +239,29 @@ export async function cancelChargedJob(replyMessageId: string, actorPhone: strin
         idempotencyKey: `job-cancel:${reply.job.id}`
       }
     });
+    const ownerAfterReversal = await tx.captain.update({
+      where: { id: owner.id },
+      data: { balanceFils: { decrement: reply.job.commissionFils } }
+    });
+    const ownerReversalEntries = [
+      { type: LedgerType.RIDER_COMMISSION, amountFils: reply.job.riderCommissionFils },
+      { type: LedgerType.ORDER_COMMISSION, amountFils: reply.job.orderCommissionFils }
+    ].filter((entry) => entry.amountFils > 0);
+    await tx.ledgerEntry.createMany({
+      data: ownerReversalEntries.map((entry) => ({
+        captainId: owner.id,
+        type: LedgerType.ADJUSTMENT,
+        amountFils: -entry.amountFils,
+        balanceAfterFils: ownerAfterReversal.balanceFils,
+        description: `عكس العمولة بسبب إلغاء الطلب`,
+        reference: reply.job.id,
+        idempotencyKey: `job-cancel:${reply.job.id}:owner:${entry.type.toLowerCase()}`
+      }))
+    });
     return {
       result: "canceled",
       amountFils: reply.job.commissionFils,
-      balanceFils: captain.balanceFils,
+      balanceFils: captain.id === ownerAfterReversal.id ? ownerAfterReversal.balanceFils : captain.balanceFils,
       priceDinars: reply.job.priceDinars,
       riderPriceDinars: reply.job.riderPriceDinars,
       orderPriceDinars: reply.job.orderPriceDinars
