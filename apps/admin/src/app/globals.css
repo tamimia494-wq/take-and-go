@@ -199,7 +199,7 @@ td:first-child strong { font-weight: 600; }
 .admin-shell .avatar-stack b { color: #172237; background: #f7b500; }
 .admin-shell th { color: #aebbd1; border-color: #2a3650; }
 .admin-shell td { color: #c0cad9; border-color: #2a3650; }
-.admin-shell td:first-child, .admin-shell .money-cell { color: #f4f7fb; }
+.admin-shell td:first-child .captain-identity strong, .admin-shell .money-cell { color: #ffd23f; }
 .admin-shell .captain-avatar { color: #ffd23f; background: rgba(247,181,0,.12); }
 .admin-shell .status-pill.active { color: #b6f0d5; background: rgba(48,183,123,.14); }
 .admin-shell .status-pill.pending_profile { color: #ffe29a; background: rgba(247,181,0,.12); }
