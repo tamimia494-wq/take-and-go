@@ -3,6 +3,9 @@ import { phoneFromChatId } from "./money";
 
 type GreenApiResponse = Record<string, unknown>;
 
+const GROUP_SENDER_CACHE_TTL_MS = 5 * 60 * 1000;
+const groupSenderCache = new Map<string, { expiresAt: number; phonesById: Map<string, string> }>();
+
 function requireGreenApiConfig(): { instanceId: string; token: string; groupId: string } {
   const { greenApiInstanceId, greenApiToken, greenApiGroupId } = config;
   if (!greenApiInstanceId || !greenApiToken || !greenApiGroupId) {
@@ -58,8 +61,7 @@ export async function deleteGroupMessage(messageId: string): Promise<void> {
   const { groupId } = requireGreenApiConfig();
   await greenApiRequest("deleteMessage", {
     chatId: groupId,
-    idMessage: messageId,
-    onlySenderDelete: false
+    idMessage: messageId
   });
 }
 
@@ -72,4 +74,25 @@ export async function getGroupParticipants(): Promise<string[]> {
   return (data.participants ?? [])
     .map((participant) => participant.phoneNumber?.trim() || participant.id || participant.participantId || "")
     .filter(Boolean);
+}
+
+export async function resolveGroupSenderPhone(senderId: string): Promise<string | null> {
+  const { groupId } = requireGreenApiConfig();
+  let cached = groupSenderCache.get(groupId);
+  if (!cached || cached.expiresAt <= Date.now()) {
+    const data = await greenApiRequest<{
+      participants?: Array<{ id?: string; lid?: string; participantId?: string; phoneNumber?: string }>;
+    }>("getGroupData", { groupId });
+    const phonesById = new Map<string, string>();
+    for (const participant of data.participants ?? []) {
+      const phone = phoneFromChatId(participant.phoneNumber ?? participant.id ?? participant.participantId ?? "");
+      if (!phone) continue;
+      for (const id of [participant.id, participant.lid, participant.participantId, participant.phoneNumber]) {
+        if (id) phonesById.set(id.trim(), phone);
+      }
+    }
+    cached = { expiresAt: Date.now() + GROUP_SENDER_CACHE_TTL_MS, phonesById };
+    groupSenderCache.set(groupId, cached);
+  }
+  return cached.phonesById.get(senderId.trim()) ?? null;
 }

@@ -3,7 +3,7 @@ import { JobCategory, Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { config } from "./config";
 import { prisma } from "./db";
-import { deleteGroupMessage, getInstancePhone, getGroupParticipants, greenApiRequest, sendGroupMessage } from "./green-api";
+import { deleteGroupMessage, getInstancePhone, getGroupParticipants, greenApiRequest, resolveGroupSenderPhone, sendGroupMessage } from "./green-api";
 import {
   hasSufficientCaptainReplyBalance,
   MINIMUM_CAPTAIN_REPLY_BALANCE_FILS,
@@ -18,6 +18,13 @@ type Webhook = {
   idMessage?: string;
   senderData?: { chatId?: string; sender?: string };
   messageData?: Record<string, unknown>;
+  // Green API journal records can also be replayed to this endpoint.
+  type?: string;
+  chatId?: string;
+  senderId?: string;
+  typeMessage?: string;
+  textMessage?: string;
+  isDeleted?: boolean;
 };
 
 export async function importGroupCaptains(): Promise<{ imported: number; total: number; skipped: string[] }> {
@@ -61,18 +68,33 @@ export async function receiveGreenApiWebhook(req: Request, res: Response): Promi
     return;
   }
   const webhook = req.body as Webhook;
-  if (webhook.typeWebhook !== "incomingMessageReceived") {
+  const incoming = normalizeIncomingWebhook(webhook);
+  if (!incoming) {
     res.sendStatus(200);
     return;
   }
 
   try {
-    await processIncomingWebhook(webhook);
+    await processIncomingWebhook(incoming);
     res.sendStatus(200);
   } catch (error) {
     console.error("Green API webhook processing failed:", error);
     res.status(500).json({ error: "Webhook processing failed." });
   }
+}
+
+function normalizeIncomingWebhook(webhook: Webhook): Webhook | null {
+  if (webhook.typeWebhook === "incomingMessageReceived") return webhook;
+  if (webhook.type !== "incoming" || webhook.isDeleted || !webhook.idMessage || !webhook.chatId) return null;
+  return {
+    typeWebhook: "incomingMessageReceived",
+    idMessage: webhook.idMessage,
+    senderData: { chatId: webhook.chatId, sender: webhook.senderId },
+    messageData: {
+      typeMessage: webhook.typeMessage,
+      ...(webhook.textMessage === undefined ? {} : { textMessageData: { textMessage: webhook.textMessage } })
+    }
+  };
 }
 
 async function processIncomingWebhook(webhook: Webhook): Promise<void> {
@@ -88,10 +110,22 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     return;
   }
 
-  const senderPhone = phoneFromChatId(webhook.senderData?.sender ?? "");
-  if (senderPhone && !isExcludedAdminPhone(senderPhone)) {
+  const senderId = webhook.senderData?.sender ?? webhook.senderData?.chatId ?? "";
+  const senderPhone = phoneFromChatId(senderId) ?? (senderId ? await resolveGroupSenderPhone(senderId) : null);
+  if (!senderPhone) {
+    console.warn(`Green API message ${messageId} was not checked: sender ID could not be mapped to a phone number.`);
+    return;
+  }
+  if (isExcludedAdminPhone(senderPhone)) {
+    return;
+  }
+  {
     const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
     if (!captain || captain.status !== "ACTIVE" || captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS) {
+      console.warn(
+        `Deleting Green API message ${messageId}: sender account is ${!captain ? "unregistered" : captain.status.toLowerCase()}, ` +
+        `balance=${captain ? captain.balanceFils : "unknown"} fils.`
+      );
       await deleteRejectedReplyMessage(messageId);
       const reason = !captain || captain.status !== "ACTIVE"
         ? "رقمك غير مسجل أو حسابك غير مفعل"
@@ -283,16 +317,16 @@ function quotedMessageId(data: Record<string, unknown>): string | null {
 
 async function deleteRejectedReplyMessage(messageId: string): Promise<void> {
   let lastError: unknown;
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
       await deleteGroupMessage(messageId);
       return;
     } catch (error) {
       lastError = error;
-      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+      if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
     }
   }
-  console.error(`Green API could not delete rejected captain reply ${messageId} after 3 attempts:`, lastError);
+  console.error(`Green API could not delete rejected captain message ${messageId} after 5 attempts:`, lastError);
   throw new Error("Could not delete rejected captain reply from the WhatsApp group.", { cause: lastError });
 }
 
