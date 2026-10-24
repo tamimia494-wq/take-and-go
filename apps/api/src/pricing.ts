@@ -20,6 +20,6 @@ export function calculateCommissionFils(pricesDinars: number[], commissionPerFiv
     if (!Number.isSafeInteger(priceDinars) || priceDinars <= 0) {
       throw new Error("Prices must be positive whole dinars.");
     }
-    return total + Math.floor(priceDinars / 5) * commissionPerFiveFils;
+    return total + Math.round(priceDinars / 5) * commissionPerFiveFils;
   }, 0);
 }
