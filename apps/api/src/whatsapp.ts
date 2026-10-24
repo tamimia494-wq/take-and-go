@@ -4,7 +4,12 @@ import type { Request, Response } from "express";
 import { config } from "./config";
 import { prisma } from "./db";
 import { deleteGroupMessage, getInstancePhone, getGroupParticipants, greenApiRequest, sendGroupMessage } from "./green-api";
-import { hasSufficientCaptainReplyBalance, normalizePhone, phoneFromChatId } from "./money";
+import {
+  hasSufficientCaptainReplyBalance,
+  MINIMUM_CAPTAIN_REPLY_BALANCE_FILS,
+  normalizePhone,
+  phoneFromChatId
+} from "./money";
 import { cancelChargedJob, processJobReaction } from "./accounting";
 import { calculateCommissionFils, extractPriceAfterLabel } from "./pricing";
 
@@ -83,6 +88,19 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     return;
   }
 
+  const senderPhone = phoneFromChatId(webhook.senderData?.sender ?? "");
+  if (senderPhone && !isExcludedAdminPhone(senderPhone)) {
+    const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
+    if (!captain || captain.status !== "ACTIVE" || captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS) {
+      await deleteRejectedReplyMessage(messageId);
+      const reason = !captain || captain.status !== "ACTIVE"
+        ? "رقمك غير مسجل أو حسابك غير مفعل"
+        : "رصيدك أقل من الحد الأدنى 0.75 د.أ";
+      await sendGroupMessage(`⚠️ تم حذف رسالتك. ${reason}. اشحن رصيدك أو تواصل مع الإدارة.`);
+      return;
+    }
+  }
+
   const text = messageText(data);
   if (!text) return;
   const sourceMessageId = quotedMessageId(data);
@@ -92,7 +110,6 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     });
     if (!job || job.status !== "PENDING") return;
 
-    const senderPhone = phoneFromChatId(webhook.senderData?.sender ?? "");
     if (!senderPhone) return;
     const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
     await prisma.whatsAppReply.upsert({
@@ -277,6 +294,11 @@ async function deleteRejectedReplyMessage(messageId: string): Promise<void> {
   }
   console.error(`Green API could not delete rejected captain reply ${messageId} after 3 attempts:`, lastError);
   throw new Error("Could not delete rejected captain reply from the WhatsApp group.", { cause: lastError });
+}
+
+function isExcludedAdminPhone(phone: string): boolean {
+  return [config.adminContactPhone, ...config.excludedAdminPhones]
+    .some((value) => phoneFromChatId(value) === phone);
 }
 
 async function sendRejectedReplyNotice(
