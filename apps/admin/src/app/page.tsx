@@ -455,11 +455,10 @@ export default function AdminHome() {
             </div>
           )}
           <div className="table-wrap">
-            <table><thead><tr><th>الكابتن</th><th>رقم الهاتف</th><th>الرصيد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+            <table><thead><tr><th>الكابتن / الهاتف</th><th>الرصيد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
               <tbody>{visibleCaptains.map((captain) => (
                 <tr key={captain.id}>
-                  <td data-label="الكابتن"><span className="captain-avatar">{(captain.fullName ?? "؟").slice(0, 1)}</span><strong>{captain.fullName ?? "بانتظار تفعيل الحساب"}</strong></td>
-                  <td data-label="رقم الهاتف" dir="ltr">{captain.phone}</td>
+                  <td data-label="الكابتن / الهاتف"><span className="captain-avatar">{(captain.fullName ?? "؟").slice(0, 1)}</span><span className="captain-identity"><strong>{captain.fullName ?? "بانتظار تفعيل الحساب"}</strong><small dir="ltr">{captain.phone}</small></span></td>
                   <td data-label="الرصيد" className="money-cell">{money(captain.balanceJod)} د.أ</td>
                   <td data-label="الحالة"><span className={`status-pill ${captain.status.toLowerCase()}`}>{statusLabel(captain.status)}</span></td>
                   <td data-label="إجراءات"><div className="row-actions"><button className="button small credit" onClick={() => { setAdjustOpen(true); setAdjustAction("credit"); setAdjustCaptain(captain); }}><CircleDollarSign size={14} /> شحن</button><button className="button small ghost" disabled={busy} onClick={() => void toggleStatus(captain)}>{captain.status === "SUSPENDED" ? "تفعيل" : "إيقاف"}</button></div></td>
