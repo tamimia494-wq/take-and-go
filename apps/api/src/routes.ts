@@ -43,24 +43,32 @@ router.post("/captain/activate", requireAuth("captain"), async (req, res) => {
       where: { id: captain.id, status: "PENDING_PROFILE" },
       data: {
         fullName: parsed.data.fullName,
-        status: "ACTIVE",
-        balanceFils: { increment: 1000 }
+        status: "ACTIVE"
       }
     });
     if (activated.count !== 1) return null;
 
-    const account = await tx.captain.findUniqueOrThrow({ where: { id: captain.id } });
-    await tx.ledgerEntry.create({
-      data: {
-        captainId: account.id,
-        type: LedgerType.CREDIT,
-        amountFils: 1000,
-        balanceAfterFils: account.balanceFils,
-        description: "مكافأة تفعيل الحساب لأول مرة",
-        idempotencyKey: `activation-bonus:${account.id}`
-      }
-    });
-    return account;
+    const idempotencyKey = `activation-bonus:${captain.id}`;
+    const existingBonus = await tx.ledgerEntry.findUnique({ where: { idempotencyKey } });
+    if (!existingBonus) {
+      const account = await tx.captain.update({
+        where: { id: captain.id },
+        data: { balanceFils: { increment: 1000 } }
+      });
+      await tx.ledgerEntry.create({
+        data: {
+          captainId: account.id,
+          type: LedgerType.CREDIT,
+          amountFils: 1000,
+          balanceAfterFils: account.balanceFils,
+          description: "مكافأة تفعيل الحساب لأول مرة",
+          idempotencyKey
+        }
+      });
+      return account;
+    }
+
+    return tx.captain.findUniqueOrThrow({ where: { id: captain.id } });
   });
   if (!updated) {
     res.status(409).json({ error: "تم تفعيل الحساب مسبقًا." });
@@ -140,6 +148,49 @@ router.get("/admin/captains", requireAuth("admin"), async (_req, res) => {
     select: { id: true, phone: true, fullName: true, status: true, balanceFils: true, createdAt: true }
   });
   res.json(captains.map((captain) => ({ ...captain, balanceJod: fromFils(captain.balanceFils) })));
+});
+
+router.post("/admin/captains/initial-credit", requireAuth("admin"), async (_req, res) => {
+  const credited = await prisma.$transaction(async (tx) => {
+    const candidates = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT c.id
+      FROM "Captain" c
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM "LedgerEntry" l
+        WHERE l."captainId" = c.id
+          AND l."idempotencyKey" = 'activation-bonus:' || c.id
+      )
+      FOR UPDATE
+    `;
+
+    let count = 0;
+    for (const candidate of candidates) {
+      const idempotencyKey = `activation-bonus:${candidate.id}`;
+      const existingBonus = await tx.ledgerEntry.findUnique({ where: { idempotencyKey } });
+      if (existingBonus) continue;
+
+      const captain = await tx.captain.update({
+        where: { id: candidate.id },
+        data: { balanceFils: { increment: 1000 } }
+      });
+      await tx.ledgerEntry.create({
+        data: {
+          captainId: captain.id,
+          type: LedgerType.CREDIT,
+          amountFils: 1000,
+          balanceAfterFils: captain.balanceFils,
+          description: "رصيد تفعيل أولي لمرة واحدة",
+          idempotencyKey
+        }
+      });
+      count += 1;
+    }
+
+    return count;
+  }, { timeout: 60_000 });
+
+  res.json({ creditedAccounts: credited, amountJodPerAccount: 1 });
 });
 
 router.get("/admin/green-api/diagnose", requireAuth("admin"), async (_req, res) => {
