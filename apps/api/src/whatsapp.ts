@@ -106,6 +106,19 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
         body: text
       }
     });
+    const rejection = !captain || captain.status !== "ACTIVE"
+      ? "unregistered"
+      : captain.balanceFils < job.commissionFils ? "insufficient" : null;
+    if (rejection) {
+      const rejectedReply = await prisma.whatsAppReply.updateMany({
+        where: { messageId, status: "PENDING" },
+        data: { status: "REJECTED" }
+      });
+      if (rejectedReply.count === 1) {
+        await deleteRejectedReplyMessage(messageId);
+        await sendRejectedReplyNotice(rejection, job.priceDinars, job.commissionFils);
+      }
+    }
     return;
   }
 
@@ -200,14 +213,7 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
 
     if (result.result === "insufficient" || result.result === "unregistered") {
       await deleteRejectedReplyMessage(targetMessageId);
-      const price = result.priceDinars ?? 0;
-      const commission = formatJod(result.amountFils);
-      const reason = result.result === "insufficient"
-        ? "رصيدك غير كافٍ"
-        : "رقمك غير مسجل أو حسابك غير مفعل";
-      await sendGroupMessage(
-        `⚠️ ${reason}. قيمة الطلب ${price} د.أ وعمولته ${commission} د.أ. يرجى التواصل مع الإدارة وشحن الرصيد لتتمكن من أخذ الطلبات.`
-      );
+      await sendRejectedReplyNotice(result.result, result.priceDinars ?? 0, result.amountFils);
     }
     return;
   }
@@ -271,6 +277,19 @@ async function deleteRejectedReplyMessage(messageId: string): Promise<void> {
   }
   console.error(`Green API could not delete rejected captain reply ${messageId} after 3 attempts:`, lastError);
   throw new Error("Could not delete rejected captain reply from the WhatsApp group.", { cause: lastError });
+}
+
+async function sendRejectedReplyNotice(
+  rejection: "insufficient" | "unregistered",
+  priceDinars: number,
+  commissionFils: number
+): Promise<void> {
+  const reason = rejection === "insufficient"
+    ? "رصيدك غير كافٍ"
+    : "رقمك غير مسجل أو حسابك غير مفعل";
+  await sendGroupMessage(
+    `⚠️ ${reason}. قيمة الطلب ${priceDinars} د.أ وعمولته ${formatJod(commissionFils)} د.أ. يرجى التواصل مع الإدارة وشحن الرصيد لتتمكن من أخذ الطلبات.`
+  );
 }
 
 function isOrder(text: string): boolean {
