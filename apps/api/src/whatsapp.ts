@@ -3,7 +3,7 @@ import { JobCategory, Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { config } from "./config";
 import { prisma } from "./db";
-import { deleteGroupMessage, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, greenApiRequest, resolveGroupSenderPhone, sendGroupMessage } from "./green-api";
+import { deleteGroupMessage, fetchRecentIncomingMessages, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, greenApiRequest, resolveGroupSenderPhone, sendGroupMessage } from "./green-api";
 import {
   hasSufficientCaptainReplyBalance,
   MINIMUM_CAPTAIN_REPLY_BALANCE_FILS,
@@ -82,6 +82,44 @@ export async function receiveGreenApiWebhook(req: Request, res: Response): Promi
     console.error("Green API webhook processing failed:", error);
     res.status(500).json({ error: "Webhook processing failed." });
   }
+}
+
+export async function replayRecentMessages(minutes = 15): Promise<{ replayed: number; skipped: number }> {
+  let history: unknown[] = [];
+  try {
+    history = await fetchRecentIncomingMessages(minutes);
+  } catch (error) {
+    console.error("Could not fetch chat history for replay:", error);
+    return { replayed: 0, skipped: 0 };
+  }
+  let replayed = 0;
+  let skipped = 0;
+  for (const entry of [...history].reverse()) {
+    const record = entry as Record<string, unknown>;
+    const messageId = stringValue(record.idMessage);
+    if (!messageId) { skipped += 1; continue; }
+    try {
+      const senderId = stringValue(record.senderId) ?? "";
+      const text = stringValue(record.textMessage);
+      const webhook: Webhook = {
+        typeWebhook: "incomingMessageReceived",
+        idMessage: messageId,
+        timestamp: typeof record.timestamp === "number" ? record.timestamp : undefined,
+        senderData: { chatId: config.greenApiGroupId, sender: senderId },
+        messageData: {
+          typeMessage: stringValue(record.type),
+          ...(text === undefined ? {} : { textMessageData: { textMessage: text } })
+        }
+      };
+      await processIncomingWebhook(webhook);
+      replayed += 1;
+    } catch (error) {
+      skipped += 1;
+      console.error(`Replay of message ${messageId} failed:`, error);
+    }
+  }
+  console.log(`Chat history replay finished: ${replayed} processed, ${skipped} skipped.`);
+  return { replayed, skipped };
 }
 
 function normalizeIncomingWebhook(webhook: Webhook): Webhook | null {

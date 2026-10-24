@@ -6,7 +6,7 @@ import { config } from "./config";
 import { prisma } from "./db";
 import { chargeWeeklyFloor, chargeWeeklyFloorIfDue } from "./accounting";
 import { router } from "./routes";
-import { receiveGreenApiWebhook } from "./whatsapp";
+import { receiveGreenApiWebhook, replayRecentMessages } from "./whatsapp";
 
 const app = express();
 const allowedOrigins = [config.captainAppUrl, config.adminAppUrl];
@@ -41,6 +41,12 @@ void chargeWeeklyFloorIfDue().catch((error: unknown) => {
 
 const server = app.listen(config.port, () => {
   console.log(`Take & Go API listening on port ${config.port}`);
+  // Recover group messages that arrived while the service was restarting.
+  setTimeout(() => {
+    void replayRecentMessages(20).catch((error: unknown) => {
+      console.error("Startup chat history replay failed:", error);
+    });
+  }, 5_000);
 });
 
 async function shutdown(): Promise<void> {
