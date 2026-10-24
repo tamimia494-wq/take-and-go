@@ -38,11 +38,39 @@ router.post("/captain/activate", requireAuth("captain"), async (req, res) => {
     res.status(409).json({ error: "تم تفعيل الحساب مسبقاً." });
     return;
   }
-  const updated = await prisma.captain.update({
-    where: { id: captain.id },
-    data: { fullName: parsed.data.fullName, status: "ACTIVE" }
+  const updated = await prisma.$transaction(async (tx) => {
+    const activated = await tx.captain.updateMany({
+      where: { id: captain.id, status: "PENDING_PROFILE" },
+      data: {
+        fullName: parsed.data.fullName,
+        status: "ACTIVE",
+        balanceFils: { increment: 1000 }
+      }
+    });
+    if (activated.count !== 1) return null;
+
+    const account = await tx.captain.findUniqueOrThrow({ where: { id: captain.id } });
+    await tx.ledgerEntry.create({
+      data: {
+        captainId: account.id,
+        type: LedgerType.CREDIT,
+        amountFils: 1000,
+        balanceAfterFils: account.balanceFils,
+        description: "مكافأة تفعيل الحساب لأول مرة",
+        idempotencyKey: `activation-bonus:${account.id}`
+      }
+    });
+    return account;
   });
-  res.json({ fullName: updated.fullName, status: updated.status });
+  if (!updated) {
+    res.status(409).json({ error: "تم تفعيل الحساب مسبقًا." });
+    return;
+  }
+  res.json({
+    fullName: updated.fullName,
+    status: updated.status,
+    balanceJod: fromFils(updated.balanceFils)
+  });
 });
 
 router.get("/captain/dashboard", requireAuth("captain"), async (req, res) => {
