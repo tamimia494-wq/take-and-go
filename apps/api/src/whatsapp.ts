@@ -226,7 +226,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
       data: {
         groupId: chatId,
         sourceMessageId: messageId,
-        sourceSenderPhone: phoneFromChatId(webhook.senderData?.sender ?? "") ?? undefined,
+        sourceSenderPhone: senderPhone,
         priceDinars,
         riderPriceDinars,
         orderPriceDinars,
@@ -243,14 +243,17 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
 }
 
 async function handleReaction(webhook: Webhook, data: Record<string, unknown>): Promise<void> {
-  const reactionData = objectValue(data.reactionMessageData) ?? {};
+  const reactionData = objectValue(data.reactionMessageData) ?? objectValue(data.extendedTextMessageData) ?? {};
   const reaction = stringValue(reactionData.text) ?? stringValue(reactionData.reaction);
   const normalizedReaction = reaction?.replace(/\uFE0F/g, "");
-  const actor = phoneFromChatId(webhook.senderData?.sender ?? "");
+  const actorId = webhook.senderData?.sender ?? webhook.senderData?.chatId ?? "";
+  const actor = phoneFromChatId(actorId) ?? (actorId ? await resolveGroupSenderPhone(actorId) : null);
   const targetMessageId =
     stringValue(reactionData.stanzaId) ??
     stringValue(reactionData.idMessage) ??
-    stringValue(reactionData.targetMessageId);
+    stringValue(reactionData.targetMessageId) ??
+    stringValue(objectValue(data.quotedMessage)?.stanzaId) ??
+    stringValue(objectValue(data.quotedMessage)?.idMessage);
   if (!targetMessageId || !actor) return;
 
   if (normalizedReaction === "👍" || normalizedReaction === "👍🏻") {
