@@ -32,6 +32,21 @@ async function api<T>(path: string, token: string, options: RequestInit = {}): P
   return data as T;
 }
 
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("تعذرت قراءة صورة الوصل."));
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("تعذرت قراءة صورة الوصل."));
+        return;
+      }
+      resolve(reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function CaptainHome() {
   const [token, setToken] = useState("");
   const [loading, setLoading] = useState(true);
@@ -85,28 +100,22 @@ export default function CaptainHome() {
       setBusy(false);
       return;
     }
+    if (!["image/jpeg", "image/png", "image/webp", "image/gif"].includes(file.type)) {
+      setError("أرفق صورة بصيغة JPG أو PNG أو WebP أو GIF.");
+      setBusy(false);
+      return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+      setError("يجب ألا يتجاوز حجم صورة الوصل 4 ميغابايت.");
+      setBusy(false);
+      return;
+    }
     try {
-      const result = await api<{ id: string; amountJod: number; captainName: string; adminPhone: string }>(
-        "/captain/topup", token, { method: "POST", body: JSON.stringify({ amount: formData.get("amount") }) }
+      const receipt = await readFileAsDataUrl(file);
+      const result = await api<{ id: string; amountJod: number }>(
+        "/captain/topup", token, { method: "POST", body: JSON.stringify({ amount: formData.get("amount"), receipt }) }
       );
-      const message = [
-        `طلب شحن رصيد — Take & Go`,
-        `الكابتن: ${result.captainName}`,
-        `المبلغ: ${result.amountJod} د.أ`,
-        `رقم الطلب: ${result.id}`
-      ].join("\n");
-      // إرفاق صورة الوصل إن دعمها الجهاز (كروم على الجوال يدعم المرفقات مع النص)
-      const waUrl = `https://wa.me/962${result.adminPhone.replace(/^0/, "")}?text=${encodeURIComponent(message)}`;
-      try {
-        if (navigator.canShare && navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], text: message, title: "وصل شحن الرصيد" });
-        } else {
-          window.open(waUrl, "_blank");
-        }
-      } catch {
-        window.open(waUrl, "_blank");
-      }
-      setNotice(`تم إنشاء طلب شحن بمبلغ ${result.amountJod} د.أ. أرسل صورة الوصل للإدارة على واتساب ${result.adminPhone} وسيتم اعتماده قريباً.`);
+      setNotice(`تم إرسال طلب شحن بمبلغ ${result.amountJod} د.أ مع صورة الوصل إلى الإدارة، وسيتم اعتماده بعد المراجعة.`);
       setTopUpOpen(false);
       form.reset();
       await loadDashboard(token);
@@ -277,9 +286,9 @@ export default function CaptainHome() {
         {topUpOpen && (
           <form className="topup-card" onSubmit={submitTopUp}>
             <strong>طلب شحن رصيد</strong>
-            <span>أدخل المبلغ، حوّل المبلغ بإحدى طرق الدفع، ثم أرفق صورة الوصل — سيُرسل الطلب وصورة الوصل للإدارة على واتساب 0797907580.</span>
+            <span>أدخل المبلغ، حوّل المبلغ بإحدى طرق الدفع، ثم أرفق صورة الوصل لإرسال الطلب إلى لوحة الإدارة. صورة الوصل مطلوبة ولا يمكن إرسال الطلب بدونها (حد أقصى 4 ميغابايت).</span>
             <input name="amount" type="number" min="0.001" step="0.001" placeholder="مبلغ الشحن بالدينار" required />
-            <input name="receipt" type="file" accept="image/*" required />
+            <input name="receipt" type="file" accept="image/jpeg,image/png,image/webp,image/gif" required />
             <button className="primary-button" disabled={busy}>{busy ? "جارٍ الإرسال..." : "إرسال طلب الشحن للإدارة"} <ArrowUpLeft size={18} /></button>
           </form>
         )}

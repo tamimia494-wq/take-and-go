@@ -22,6 +22,7 @@ app.use(cors({
   },
   credentials: false
 }));
+app.use("/api/captain/topup", express.json({ limit: "6mb" }));
 app.use(express.json({ limit: "256kb" }));
 app.post("/webhooks/green-api", receiveGreenApiWebhook);
 app.use("/api", router);

@@ -6,6 +6,7 @@ import { prisma } from "./db";
 import { deleteGroupMessage, getInstancePhone, getGroupParticipants, greenApiRequest, sendGroupMessage } from "./green-api";
 import { normalizePhone, phoneFromChatId } from "./money";
 import { cancelChargedJob, processJobReaction } from "./accounting";
+import { calculateCommissionFils, extractPriceAfterLabel } from "./pricing";
 
 type Webhook = {
   typeWebhook?: string;
@@ -109,7 +110,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   }
 
   const items = text.split(/\r?\n/).map((line) => {
-    const priceDinars = extractPrice(line);
+    const priceDinars = extractPriceAfterLabel(line);
     return priceDinars === null ? null : { priceDinars, category: isOrder(line) ? JobCategory.ORDER : JobCategory.RIDER };
   }).filter((item) => item !== null);
   if (items.length === 0) return;
@@ -128,8 +129,14 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     : orderPriceDinars > 0 ? JobCategory.ORDER : JobCategory.RIDER;
   const settings = await prisma.appSettings.findUnique({ where: { id: "default" } });
   if (!settings) throw new Error("Application settings have not been initialized.");
-  const riderCommissionFils = (riderPriceDinars / 5) * settings.riderCommissionPerFiveFils;
-  const orderCommissionFils = (orderPriceDinars / 5) * settings.orderCommissionPerFiveFils;
+  const riderCommissionFils = calculateCommissionFils(
+    items.filter((item) => item.category === JobCategory.RIDER).map((item) => item.priceDinars),
+    settings.riderCommissionPerFiveFils
+  );
+  const orderCommissionFils = calculateCommissionFils(
+    items.filter((item) => item.category === JobCategory.ORDER).map((item) => item.priceDinars),
+    settings.orderCommissionPerFiveFils
+  );
   const commissionFils = riderCommissionFils + orderCommissionFils;
   if (!Number.isSafeInteger(commissionFils) || commissionFils > 2_147_483_647) {
     throw new Error("The configured commission exceeds the supported range.");
@@ -176,6 +183,14 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
 
     const result = await processJobReaction(targetMessageId);
     if (result.result === "not_tracked") return;
+    if (result.result === "already_processed") {
+      const storedReply = await prisma.whatsAppReply.findUnique({
+        where: { messageId: targetMessageId },
+        select: { status: true }
+      });
+      if (storedReply?.status === "REJECTED") await deleteRejectedReplyMessage(targetMessageId);
+      return;
+    }
     if (result.result === "charged") {
       await sendGroupMessage(
         `✅ تم اعتماد الطلب للكابتن. ${formatJobPrice(result.orderPriceDinars, result.riderPriceDinars)}. العمولة ${formatJod(result.amountFils)} د.أ. الرصيد المتبقي ${formatJod(result.balanceFils)} د.أ.`
@@ -184,11 +199,7 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     }
 
     if (result.result === "insufficient" || result.result === "unregistered") {
-      try {
-        await deleteGroupMessage(targetMessageId);
-      } catch (error) {
-        console.error("Green API could not delete a rejected captain reply:", error);
-      }
+      await deleteRejectedReplyMessage(targetMessageId);
       const price = result.priceDinars ?? 0;
       const commission = formatJod(result.amountFils);
       const reason = result.result === "insufficient"
@@ -247,17 +258,19 @@ function quotedMessageId(data: Record<string, unknown>): string | null {
   return candidates.find(Boolean) ?? null;
 }
 
-function extractPrice(text: string): number | null {
-  const westernDigits = text.replace(/[٠-٩۰-۹]/g, (digit) => {
-    const index = "٠١٢٣٤٥٦٧٨٩".indexOf(digit);
-    const persianIndex = "۰۱۲۳۴۵۶۷۸۹".indexOf(digit);
-    return String(index >= 0 ? index : persianIndex);
-  });
-  const matches = westernDigits.match(/\d+/g) ?? [];
-  const candidates = matches.map(Number).filter(
-    (amount) => Number.isSafeInteger(amount) && amount > 0 && amount <= 2_147_483_647 && amount % 5 === 0
-  );
-  return candidates[0] ?? null;
+async function deleteRejectedReplyMessage(messageId: string): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await deleteGroupMessage(messageId);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 500));
+    }
+  }
+  console.error(`Green API could not delete rejected captain reply ${messageId} after 3 attempts:`, lastError);
+  throw new Error("Could not delete rejected captain reply from the WhatsApp group.", { cause: lastError });
 }
 
 function isOrder(text: string): boolean {

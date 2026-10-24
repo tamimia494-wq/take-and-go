@@ -313,9 +313,29 @@ router.put("/admin/settings", requireAuth("admin"), async (req, res) => {
 
 // ==== طلبات شحن الرصيد ====
 router.post("/captain/topup", requireAuth("captain"), async (req, res) => {
-  const parsed = z.object({ amount: z.union([z.string(), z.number()]) }).safeParse(req.body);
+  const parsed = z.object({
+    amount: z.union([z.string(), z.number()]),
+    receipt: z.string().min(1).max(5_592_500)
+  }).safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "أدخل مبلغ الشحن." });
+    const hasReceiptError = parsed.error.issues.some((issue) => issue.path[0] === "receipt");
+    res.status(400).json({ error: hasReceiptError ? "أرفق صورة وصل التحويل لإتمام الطلب." : "أدخل مبلغ الشحن." });
+    return;
+  }
+  const receiptMatch = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(parsed.data.receipt);
+  if (!receiptMatch) {
+    res.status(400).json({ error: "أرفق صورة وصل صالحة بصيغة JPG أو PNG أو WebP أو GIF." });
+    return;
+  }
+  const receiptMimeType = receiptMatch[1];
+  const receiptData = Buffer.from(receiptMatch[2], "base64");
+  if (
+    receiptData.length === 0 ||
+    receiptData.length > 4 * 1024 * 1024 ||
+    receiptData.toString("base64") !== receiptMatch[2] ||
+    !isSupportedReceiptImage(receiptMimeType, receiptData)
+  ) {
+    res.status(400).json({ error: "صورة الوصل غير صالحة أو يتجاوز حجمها 4 ميغابايت." });
     return;
   }
   let amountFils: number;
@@ -329,18 +349,12 @@ router.post("/captain/topup", requireAuth("captain"), async (req, res) => {
     res.status(400).json({ error: "يجب أن يكون مبلغ الشحن أكبر من صفر." });
     return;
   }
-  const captain = await prisma.captain.findUniqueOrThrow({
-    where: { id: req.user!.id },
-    select: { fullName: true, phone: true }
-  });
   const created = await prisma.topUpRequest.create({
-    data: { captainId: req.user!.id, amountFils }
+    data: { captainId: req.user!.id, amountFils, receiptData, receiptMimeType }
   });
   res.json({
     id: created.id,
-    amountJod: fromFils(amountFils),
-    captainName: captain.fullName ?? captain.phone,
-    adminPhone: config.adminContactPhone
+    amountJod: fromFils(amountFils)
   });
 });
 
@@ -348,16 +362,41 @@ router.get("/admin/topups", requireAuth("admin"), async (_req, res) => {
   const requests = await prisma.topUpRequest.findMany({
     orderBy: { createdAt: "desc" },
     take: 100,
-    include: { captain: { select: { fullName: true, phone: true } } }
+    select: {
+      id: true,
+      amountFils: true,
+      receiptMimeType: true,
+      status: true,
+      createdAt: true,
+      captain: { select: { fullName: true, phone: true } }
+    }
   });
   res.json(requests.map((request) => ({
     id: request.id,
     captainName: request.captain.fullName ?? request.captain.phone,
     captainPhone: request.captain.phone,
     amountJod: fromFils(request.amountFils),
+    hasReceipt: request.receiptMimeType !== null,
     status: request.status,
     createdAt: request.createdAt
   })));
+});
+
+router.get("/admin/topups/:id/receipt", requireAuth("admin"), async (req, res) => {
+  const id = typeof req.params.id === "string" ? req.params.id : undefined;
+  if (!id) {
+    res.status(400).json({ error: "معرّف غير صالح." });
+    return;
+  }
+  const request = await prisma.topUpRequest.findUnique({
+    where: { id },
+    select: { receiptData: true, receiptMimeType: true }
+  });
+  if (!request?.receiptData || !request.receiptMimeType) {
+    res.status(404).json({ error: "صورة وصل الشحن غير موجودة." });
+    return;
+  }
+  res.type(request.receiptMimeType).send(request.receiptData);
 });
 
 router.post("/admin/topups/:id/approve", requireAuth("admin"), async (req, res) => {
@@ -371,6 +410,7 @@ router.post("/admin/topups/:id/approve", requireAuth("admin"), async (req, res) 
       const request = await tx.topUpRequest.findUnique({ where: { id }, include: { captain: true } });
       if (!request) throw new Error("طلب الشحن غير موجود.");
       if (request.status !== "PENDING") throw new Error("تمت معالجة الطلب مسبقاً.");
+      if (!request.receiptData || !request.receiptMimeType) throw new Error("لا يمكن اعتماد طلب شحن بدون صورة وصل.");
       const claimed = await tx.topUpRequest.updateMany({
         where: { id, status: "PENDING" },
         data: { status: "APPROVED", reviewedAt: new Date() }
@@ -406,11 +446,10 @@ router.post("/admin/topups/:id/reject", requireAuth("admin"), async (req, res) =
     return;
   }
   try {
-    const claimed = await prisma.topUpRequest.updateMany({
-      where: { id, status: "PENDING" },
-      data: { status: "REJECTED", reviewedAt: new Date() }
+    const deleted = await prisma.topUpRequest.deleteMany({
+      where: { id, status: "PENDING" }
     });
-    if (claimed.count !== 1) {
+    if (deleted.count !== 1) {
       res.status(400).json({ error: "تمت معالجة الطلب مسبقاً أو غير موجود." });
       return;
     }
@@ -455,6 +494,16 @@ router.delete("/admin/payment-methods/:id", requireAuth("admin"), async (req, re
   }
   res.json({ ok: true });
 });
+
+function isSupportedReceiptImage(mimeType: string, data: Buffer): boolean {
+  if (mimeType === "image/jpeg") return data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+  if (mimeType === "image/png") return data.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (mimeType === "image/gif") return data.subarray(0, 6).toString("ascii").match(/^GIF8[79]a$/) !== null;
+  return mimeType === "image/webp" &&
+    data.length >= 12 &&
+    data.subarray(0, 4).toString("ascii") === "RIFF" &&
+    data.subarray(8, 12).toString("ascii") === "WEBP";
+}
 
 router.post("/admin/password", requireAuth("admin"), async (req, res) => {
   const parsed = z.object({

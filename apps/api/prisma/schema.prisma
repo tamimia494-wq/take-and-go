@@ -141,6 +141,8 @@ model TopUpRequest {
   id          String       @id @default(cuid())
   captainId   String
   amountFils  Int
+  receiptData Bytes?       @db.ByteA
+  receiptMimeType String?
   status      TopUpStatus  @default(PENDING)
   createdAt   DateTime     @default(now())
   reviewedAt  DateTime?

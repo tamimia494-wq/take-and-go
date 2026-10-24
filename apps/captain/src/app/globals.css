@@ -98,7 +98,7 @@ input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #126df21c; }
 .balance-value { position: relative; z-index: 1; margin: 13px 0 4px; font-size: clamp(34px, 5vw, 45px); font-weight: 700; direction: ltr; text-align: right; }
 .balance-value small { font-size: 15px; font-weight: 500; }
 .balance-footnote { position: relative; z-index: 1; color: #deebff; font-size: 10px; }
-.balance-decoration { position: absolute; left: 5%; top: -48px; color: #ffffff0c; font-size: 270px; line-height: 1; font-weight: 800; transform: rotate(-10deg); }
+.balance-decoration { position: absolute; z-index: 0; left: 5%; top: -48px; color: #ffffff0c; font-size: 270px; line-height: 1; font-weight: 800; transform: rotate(-10deg); pointer-events: none; }
 .stat-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin: 19px 0 30px; }
 .stat-card { background: #fff; border: 1px solid var(--line); border-radius: 15px; padding: 19px; display: grid; grid-template-columns: 42px 1fr auto; align-items: center; gap: 5px 12px; }
 .stat-icon { grid-row: span 2; width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; }
@@ -127,7 +127,7 @@ input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #126df21c; }
 .payment-row { width: 100%; text-align: right; background: #fbfcfe; border: 1px solid #eef1f6; border-radius: 12px; padding: 13px 14px; cursor: pointer; font: inherit; }
 .payment-row:hover { border-color: #cdd8ea; }
 .payment-row .ledger-description span { font-size: 11px; color: #4d5a6b; letter-spacing: 0.4px; }
-.topup-button { display: inline-flex; align-items: center; gap: 7px; margin-top: 13px; padding: 10px 18px; border: none; border-radius: 10px; background: #ffffff; color: #1d2735; font-weight: 700; font-size: 13px; cursor: pointer; }
+.topup-button { position: relative; z-index: 2; display: inline-flex; align-items: center; gap: 7px; margin-top: 13px; padding: 10px 18px; border: none; border-radius: 10px; background: #ffffff; color: #1d2735; font-weight: 700; font-size: 13px; cursor: pointer; }
 .topup-button:hover { background: #f2f6ff; }
 .topup-card { margin: -6px 20px 18px; display: grid; gap: 10px; padding: 16px; border: 1px solid #e2e9f4; border-radius: 14px; background: #fbfcfe; }
 .topup-card strong { font-size: 14px; color: #1d2735; }
@@ -170,4 +170,55 @@ input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #126df21c; }
   .stat-icon { width: 30px; height: 30px; }
   .ledger-row { align-items: start; }
   .ledger-amount { padding-top: 4px; }
+}
+
+@media (max-width: 600px) {
+  html, body { min-width: 320px; }
+  body { overflow-x: hidden; }
+  button, input { font-size: 14px; }
+  .topbar { height: 62px; padding: 0 13px; }
+  .brand-small .brand-name { font-size: 17px; }
+  .brand-small .brand-mark { width: 33px; height: 33px; }
+  .logout-button { min-height: 42px; padding: 8px 11px; }
+  .dashboard-content { width: calc(100% - 24px); margin: 19px auto 32px; }
+  .page-heading { margin-bottom: 15px; }
+  .page-heading h1 { font-size: 20px; }
+  .today-date { font-size: 10px; }
+  .balance-card { min-height: 0; padding: 18px; }
+  .balance-copy { font-size: 11px; }
+  .balance-icon { width: 36px; height: 36px; }
+  .balance-value { margin: 12px 0 3px; font-size: clamp(32px, 10vw, 40px); }
+  .balance-footnote { display: block; max-width: 70%; font-size: 9px; line-height: 1.7; }
+  .topup-button { min-height: 44px; margin-top: 13px; padding: 10px 15px; font-size: 12px; }
+  .topup-card { margin: 10px 0 16px; padding: 14px; }
+  .topup-card input { min-height: 46px; width: 100%; margin: 0; font-size: 14px; }
+  .topup-card .primary-button { min-height: 46px; }
+  .stat-grid { grid-template-columns: 1fr 1fr; gap: 8px; margin: 14px 0 18px; }
+  .stat-card { min-width: 0; grid-template-columns: 31px minmax(0, 1fr); padding: 11px 9px; gap: 5px 7px; border-radius: 12px; }
+  .stat-icon { width: 31px; height: 31px; }
+  .stat-label { font-size: 9px; line-height: 1.5; }
+  .stat-card strong { font-size: 19px; }
+  .stat-card small { font-size: 8px; }
+  .ledger-section { padding: 15px 12px; border-radius: 14px; margin-bottom: 12px; }
+  .section-heading { align-items: flex-start; gap: 8px; padding-bottom: 13px; }
+  .section-heading h2 { font-size: 14px; }
+  .ledger-count { max-width: 42%; text-align: left; font-size: 9px; line-height: 1.6; }
+  .ledger-row { min-width: 0; padding: 12px 0; }
+  .ledger-description { overflow-wrap: anywhere; }
+  .ledger-description span { font-size: 8px; }
+  .payment-row { padding: 10px; }
+  .payment-row .ledger-description span { font-size: 10px; }
+  .ledger-amount { flex: none; }
+  .ledger-amount strong { white-space: nowrap; }
+  .success-message { margin: 0 0 10px; font-size: 10px; line-height: 1.7; }
+  .footer { padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+  .auth-hero { padding: max(26px, env(safe-area-inset-top)) 14px max(24px, env(safe-area-inset-bottom)); background-size: cover; }
+  .auth-hero-inner { gap: 24px; }
+  .auth-card-dark { padding: 24px 17px 20px; border-radius: 18px; }
+  .hero-footer { margin-top: 24px; }
+  .auth-card, .profile-card { padding: 28px 20px; border-radius: 17px; }
+  .profile-screen { padding: 14px; }
+  .profile-card h1 { font-size: 20px; }
+  .profile-card label { text-align: right; }
+  .profile-card input { min-height: 46px; }
 }

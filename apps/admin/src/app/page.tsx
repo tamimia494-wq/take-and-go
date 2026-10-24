@@ -10,7 +10,7 @@ type Settings = { groupFloorJod: number; riderCommissionPerFiveJod: number; orde
 type Captain = { id: string; phone: string; fullName: string | null; status: "ACTIVE" | "PENDING_PROFILE" | "SUSPENDED"; balanceJod: number; createdAt: string };
 type Activity = { id: string; description: string; type: string; amountJod: number; createdAt: string; captain: { fullName: string | null; phone: string } };
 type PaymentMethod = { id: string; label: string; details: string };
-type TopUpRequest = { id: string; captainName: string; captainPhone: string; amountJod: number; status: string; createdAt: string };
+type TopUpRequest = { id: string; captainName: string; captainPhone: string; amountJod: number; hasReceipt: boolean; status: string; createdAt: string };
 type Overview = { captainCount: number; activeCaptainCount: number; totalBalanceJod: number; settings: Settings; latestActivity: Activity[] };
 
 async function api<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
@@ -39,6 +39,7 @@ export default function AdminHome() {
   const [showPassword, setShowPassword] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [topUps, setTopUps] = useState<TopUpRequest[]>([]);
+  const [receiptPreview, setReceiptPreview] = useState<{ id: string; url: string } | null>(null);
 
   const refresh = useCallback(async (authToken: string) => {
     const [home, list, methods, topUpList] = await Promise.all([
@@ -67,6 +68,20 @@ export default function AdminHome() {
       setLoading(false);
     }
   }, [refresh]);
+
+  useEffect(() => {
+    if (!token) return;
+    const interval = window.setInterval(() => {
+      void api<TopUpRequest[]>("/admin/topups", token)
+        .then(setTopUps)
+        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "تعذر تحديث طلبات الشحن."));
+    }, 15000);
+    return () => window.clearInterval(interval);
+  }, [token]);
+
+  useEffect(() => () => {
+    if (receiptPreview) URL.revokeObjectURL(receiptPreview.url);
+  }, [receiptPreview]);
 
   async function login(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -219,17 +234,18 @@ export default function AdminHome() {
 
   async function changePassword(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const formElement = event.currentTarget;
     setBusy(true);
     setError("");
     setNotice("");
-    const form = new FormData(event.currentTarget);
+    const form = new FormData(formElement);
     try {
       await api("/admin/password", token, {
         method: "POST",
         body: JSON.stringify({ currentPassword: form.get("currentPassword"), newPassword: form.get("newPassword") })
       });
       setNotice("تم تغيير كلمة مرور الإدارة بنجاح.");
-      event.currentTarget.reset();
+      formElement.reset();
       setShowPassword(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر تغيير كلمة المرور.");
@@ -252,19 +268,44 @@ export default function AdminHome() {
     }
   }
 
+  async function toggleReceipt(id: string) {
+    if (receiptPreview?.id === id) {
+      setReceiptPreview(null);
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(`${API}/admin/topups/${id}/receipt`, {
+        headers: { authorization: `Bearer ${token}` }
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? "تعذر تحميل صورة الوصل.");
+      }
+      const url = URL.createObjectURL(await response.blob());
+      setReceiptPreview({ id, url });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تحميل صورة الوصل.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function addPaymentMethod(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const formElement = event.currentTarget;
     setBusy(true);
     setError("");
     setNotice("");
-    const form = new FormData(event.currentTarget);
+    const form = new FormData(formElement);
     try {
       await api("/admin/payment-methods", token, {
         method: "POST",
         body: JSON.stringify({ label: form.get("label"), details: form.get("details") })
       });
       setNotice("تمت إضافة طريقة الدفع.");
-      event.currentTarget.reset();
+      formElement.reset();
       await refresh(token);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذرت إضافة طريقة الدفع.");
@@ -404,11 +445,11 @@ export default function AdminHome() {
             <table><thead><tr><th>الكابتن</th><th>رقم الهاتف</th><th>الرصيد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
               <tbody>{visibleCaptains.map((captain) => (
                 <tr key={captain.id}>
-                  <td><span className="captain-avatar">{(captain.fullName ?? "؟").slice(0, 1)}</span><strong>{captain.fullName ?? "بانتظار تفعيل الحساب"}</strong></td>
-                  <td dir="ltr">{captain.phone}</td>
-                  <td className="money-cell">{money(captain.balanceJod)} د.أ</td>
-                  <td><span className={`status-pill ${captain.status.toLowerCase()}`}>{statusLabel(captain.status)}</span></td>
-                  <td><div className="row-actions"><button className="button small credit" onClick={() => { setAdjustOpen(true); setAdjustAction("credit"); setAdjustCaptain(captain); }}><CircleDollarSign size={14} /> شحن</button><button className="button small ghost" disabled={busy} onClick={() => void toggleStatus(captain)}>{captain.status === "SUSPENDED" ? "تفعيل" : "إيقاف"}</button></div></td>
+                  <td data-label="الكابتن"><span className="captain-avatar">{(captain.fullName ?? "؟").slice(0, 1)}</span><strong>{captain.fullName ?? "بانتظار تفعيل الحساب"}</strong></td>
+                  <td data-label="رقم الهاتف" dir="ltr">{captain.phone}</td>
+                  <td data-label="الرصيد" className="money-cell">{money(captain.balanceJod)} د.أ</td>
+                  <td data-label="الحالة"><span className={`status-pill ${captain.status.toLowerCase()}`}>{statusLabel(captain.status)}</span></td>
+                  <td data-label="إجراءات"><div className="row-actions"><button className="button small credit" onClick={() => { setAdjustOpen(true); setAdjustAction("credit"); setAdjustCaptain(captain); }}><CircleDollarSign size={14} /> شحن</button><button className="button small ghost" disabled={busy} onClick={() => void toggleStatus(captain)}>{captain.status === "SUSPENDED" ? "تفعيل" : "إيقاف"}</button></div></td>
                 </tr>
               ))}</tbody>
             </table>
@@ -428,12 +469,20 @@ export default function AdminHome() {
           {topUps.map((request) => (
             <article key={request.id} className="topup-admin-row">
               <div><strong>{request.captainName} · <span dir="ltr">{request.captainPhone}</span></strong><span>مبلغ {money(request.amountJod)} د.أ · {new Intl.DateTimeFormat("ar-JO", { dateStyle: "short", timeStyle: "short" }).format(new Date(request.createdAt))}</span></div>
-              {request.status === "PENDING" ? (
-                <div className="row-actions">
-                  <button className="button small credit" disabled={busy} onClick={() => void reviewTopUp(request.id, true)}>اعتماد</button>
-                  <button className="button small debit" disabled={busy} onClick={() => void reviewTopUp(request.id, false)}>رفض</button>
-                </div>
-              ) : <span className={`status-pill ${request.status === "APPROVED" ? "active" : "suspended"}`}>{request.status === "APPROVED" ? "معتمد" : "مرفوض"}</span>}
+              <div className="row-actions">
+                {request.hasReceipt ? (
+                  <button className="button small ghost" disabled={busy} onClick={() => void toggleReceipt(request.id)}>
+                    {receiptPreview?.id === request.id ? "إخفاء الوصل" : "عرض الوصل"}
+                  </button>
+                ) : <span className="status-pill suspended">لا يوجد وصل</span>}
+                {request.status === "PENDING" ? (
+                  <>
+                    <button className="button small credit" disabled={busy || !request.hasReceipt} onClick={() => void reviewTopUp(request.id, true)}>اعتماد</button>
+                    <button className="button small debit" disabled={busy} onClick={() => void reviewTopUp(request.id, false)}>رفض</button>
+                  </>
+                ) : <span className={`status-pill ${request.status === "APPROVED" ? "active" : "suspended"}`}>{request.status === "APPROVED" ? "معتمد" : "مرفوض"}</span>}
+              </div>
+              {receiptPreview?.id === request.id && <img className="topup-receipt-preview" src={receiptPreview.url} alt={`وصل الشحن للكابتن ${request.captainName}`} />}
             </article>
           ))}
           {!topUps.length && <div className="empty">لا توجد طلبات شحن بعد.</div>}
