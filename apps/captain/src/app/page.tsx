@@ -299,8 +299,8 @@ export default function CaptainHome() {
           </form>
         )}
         <section className="stat-grid" aria-label="إحصائيات الطلبات">
-          <article className="stat-card"><span className="stat-icon blue"><CarFront size={21} /></span><span className="stat-label">الأوردرات المكتملة</span><strong>{dashboard?.statistics.orders ?? 0}</strong><small>{dashboard?.statistics.orderUnits ?? 0} وحدة</small></article>
-          <article className="stat-card"><span className="stat-icon green"><ArrowDownLeft size={21} /></span><span className="stat-label">الركاب المكتملون</span><strong>{dashboard?.statistics.riders ?? 0}</strong><small>{dashboard?.statistics.riderUnits ?? 0} وحدة</small></article>
+          <article className="stat-card"><span className="stat-icon blue"><CarFront size={21} /></span><span className="stat-label">الأوردرات المكتملة</span><strong>{dashboard?.statistics.orders ?? 0}</strong><small>كل 5 د.أ = أوردر واحد</small></article>
+          <article className="stat-card"><span className="stat-icon green"><ArrowDownLeft size={21} /></span><span className="stat-label">الركاب المكتملون</span><strong>{dashboard?.statistics.riders ?? 0}</strong><small>كل 5 د.أ = راكب واحد</small></article>
         </section>
         <section className="ledger-section">
           <div className="section-heading"><div><p className="eyebrow">لشحن رصيدك</p><h2>طرق الدفع المتاحة</h2></div><span className="ledger-count">اضغط على الرقم لنسخه</span></div>

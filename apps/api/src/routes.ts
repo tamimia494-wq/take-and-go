@@ -59,13 +59,15 @@ router.get("/captain/dashboard", requireAuth("captain"), async (req, res) => {
       take: 100
     })
   ]);
+  const orderUnits = jobs.reduce((sum, job) => sum + Math.round(job.orderPriceDinars / 5), 0);
+  const riderUnits = jobs.reduce((sum, job) => sum + Math.round(job.riderPriceDinars / 5), 0);
   res.json({
     balanceJod: fromFils(captain.balanceFils),
     statistics: {
-      orders: jobs.filter((job) => job.orderPriceDinars > 0).length,
-      riders: jobs.filter((job) => job.riderPriceDinars > 0).length,
-      orderUnits: jobs.reduce((sum, job) => sum + job.orderPriceDinars / 5, 0),
-      riderUnits: jobs.reduce((sum, job) => sum + job.riderPriceDinars / 5, 0)
+      orders: orderUnits,
+      riders: riderUnits,
+      orderUnits,
+      riderUnits
     },
     ledger: ledger.map((entry) => ({
       ...entry,
