@@ -3,7 +3,7 @@ import { JobCategory, Prisma } from "@prisma/client";
 import type { Request, Response } from "express";
 import { config } from "./config";
 import { prisma } from "./db";
-import { deleteGroupMessage, getInstancePhone, getGroupParticipants, greenApiRequest, resolveGroupSenderPhone, sendGroupMessage } from "./green-api";
+import { deleteGroupMessage, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, greenApiRequest, resolveGroupSenderPhone, sendGroupMessage } from "./green-api";
 import {
   hasSufficientCaptainReplyBalance,
   MINIMUM_CAPTAIN_REPLY_BALANCE_FILS,
@@ -259,9 +259,34 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
   if (normalizedReaction === "👍" || normalizedReaction === "👍🏻") {
     const reply = await prisma.whatsAppReply.findUnique({
       where: { messageId: targetMessageId },
-      include: { job: { select: { sourceSenderPhone: true } } }
+      include: { job: { select: { id: true, sourceMessageId: true, sourceSenderPhone: true } } }
     });
-    if (!reply || !reply.job.sourceSenderPhone || actor !== reply.job.sourceSenderPhone) return;
+    if (!reply) {
+      console.warn(`Green API 👍 reaction ${webhook.idMessage ?? "unknown"} targets an untracked message ${targetMessageId}.`);
+      return;
+    }
+    let sourceSenderPhone = reply.job.sourceSenderPhone;
+    if (!sourceSenderPhone) {
+      try {
+        sourceSenderPhone = await getGroupMessageSenderPhone(reply.job.sourceMessageId);
+        if (sourceSenderPhone) {
+          await prisma.whatsAppJob.updateMany({
+            where: { id: reply.job.id, sourceSenderPhone: null },
+            data: { sourceSenderPhone }
+          });
+        }
+      } catch (error) {
+        console.error(`Could not recover owner of WhatsApp job ${reply.job.id} from Green API history:`, error);
+      }
+    }
+    if (!sourceSenderPhone) {
+      console.warn(`Green API 👍 reaction ${webhook.idMessage ?? "unknown"} skipped: job owner could not be resolved.`);
+      return;
+    }
+    if (actor !== sourceSenderPhone) {
+      console.warn(`Green API 👍 reaction ${webhook.idMessage ?? "unknown"} ignored: it was not sent by the job owner.`);
+      return;
+    }
 
     const result = await processJobReaction(targetMessageId);
     if (result.result === "not_tracked") return;

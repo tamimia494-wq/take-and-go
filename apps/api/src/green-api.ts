@@ -1,8 +1,6 @@
 import { config } from "./config";
 import { phoneFromChatId } from "./money";
 
-type GreenApiResponse = Record<string, unknown>;
-
 const GROUP_SENDER_CACHE_TTL_MS = 5 * 60 * 1000;
 const groupSenderCache = new Map<string, { expiresAt: number; phonesById: Map<string, string> }>();
 
@@ -14,7 +12,7 @@ function requireGreenApiConfig(): { instanceId: string; token: string; groupId: 
   return { instanceId: greenApiInstanceId, token: greenApiToken, groupId: greenApiGroupId };
 }
 
-export async function greenApiRequest<T extends GreenApiResponse>(
+export async function greenApiRequest<T>(
   method: string,
   body?: Record<string, unknown>
 ): Promise<T> {
@@ -105,4 +103,15 @@ export async function resolveGroupSenderPhone(senderId: string): Promise<string 
   return cached.phonesById.get(normalizedSenderId) ??
     cached.phonesById.get(normalizedSenderId.split("@")[0]) ??
     null;
+}
+
+export async function getGroupMessageSenderPhone(messageId: string): Promise<string | null> {
+  const { groupId } = requireGreenApiConfig();
+  const history = await greenApiRequest<Array<{ idMessage?: string; senderId?: string }>>(
+    "getChatHistory",
+    { chatId: groupId, count: 100 }
+  );
+  const message = history.find((entry) => entry.idMessage === messageId);
+  if (!message?.senderId) return null;
+  return phoneFromChatId(message.senderId) ?? resolveGroupSenderPhone(message.senderId);
 }
