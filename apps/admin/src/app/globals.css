@@ -102,6 +102,13 @@ input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #126df21b; }
 .import-panel .hint { margin-top: 12px; }
 .captains-panel { padding-bottom: 8px; }
 .list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+.captains-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: 1; min-width: 0; border: 0; padding: 0; color: inherit; background: transparent; text-align: right; font: inherit; cursor: pointer; }
+.captains-toggle .panel-heading { display: flex; align-items: center; gap: 10px; }
+.captains-toggle .panel-heading > span:last-child { display: grid; gap: 4px; }
+.captains-toggle strong { font-size: 13px; }
+.captains-toggle small { color: #8b97aa; font-size: 9px; font-weight: 400; }
+.admin-shell .captains-toggle small { color: #aebbd1; }
+.captains-toggle:focus-visible { outline: 2px solid #f7b500; outline-offset: 4px; border-radius: 8px; }
 .panel-heading.compact { margin: 0; }
 .search { width: min(260px,48%); font-size: 10px; padding: 10px 12px; }
 .table-wrap { overflow-x: auto; }

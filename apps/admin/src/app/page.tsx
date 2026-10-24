@@ -31,6 +31,7 @@ export default function AdminHome() {
   const [notice, setNotice] = useState("");
   const [overview, setOverview] = useState<Overview | null>(null);
   const [captains, setCaptains] = useState<Captain[]>([]);
+  const [showCaptains, setShowCaptains] = useState(false);
   const [settings, setSettings] = useState<Settings>({ groupFloorJod: 0, riderCommissionPerFiveJod: 0.75, orderCommissionPerFiveJod: 1 });
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [adjustAction, setAdjustAction] = useState<"credit" | "debit">("credit");
@@ -392,7 +393,7 @@ export default function AdminHome() {
         {notice && <p className="notice" role="status">{notice}</p>}
         <section className="metric-grid">
           <Metric icon={<Users size={20} />} label="إجمالي الكباتن" value={overview?.captainCount ?? 0} color="blue" detail={`${overview?.activeCaptainCount ?? 0} حساب مفعل`} />
-          <Metric icon={<CircleDollarSign size={20} />} label="شحن رصيد للكابتن" value="فتح النموذج" color="violet" detail="حسب رقم الهاتف" onClick={() => { setAdjustOpen(true); setAdjustCaptain(null); }} />
+          <Metric icon={<CircleDollarSign size={20} />} label="شحن رصيد للكابتن" value="فتح النموذج" color="violet" detail="حسب رقم الهاتف" onClick={() => { setShowCaptains(true); setAdjustOpen(true); setAdjustCaptain(null); }} />
           <Metric icon={<BadgeCheck size={20} />} label="حالة التكامل" value="Green API" color="green" detail="ربط مجموعة واتساب" />
         </section>
         <section className="admin-grid">
@@ -417,7 +418,19 @@ export default function AdminHome() {
           </article>
         </section>
         <section className="panel captains-panel">
-          <div className="list-heading"><div className="panel-heading compact"><span className="panel-icon"><Users size={19} /></span><div><h2>إدارة الكباتن</h2><p>{captains.length} حساب مسجل</p></div></div><input className="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="بحث بالاسم أو الهاتف" /></div>
+          <div className="list-heading">
+            <button
+              type="button"
+              className="captains-toggle"
+              aria-expanded={showCaptains}
+              onClick={() => setShowCaptains((value) => !value)}
+            >
+              <span className="panel-heading compact"><span className="panel-icon"><Users size={19} /></span><span><strong>إدارة الكباتن</strong><small>{captains.length} حساب مسجل</small></span></span>
+              <span className="button ghost">{showCaptains ? "إخفاء الحسابات" : "عرض الحسابات"}</span>
+            </button>
+            {showCaptains && <input className="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="بحث بالاسم أو الهاتف" />}
+          </div>
+          {showCaptains && <>
           {adjustOpen && (
             <div className="credit-form">
               {!adjustCaptain ? (
@@ -455,6 +468,7 @@ export default function AdminHome() {
             </table>
             {!visibleCaptains.length && <div className="empty">لا يوجد كباتن مطابقون للبحث.</div>}
           </div>
+          </>}
         </section>
         <section className="panel activity-panel">
           <div className="panel-heading compact"><span className="panel-icon"><ArrowDownLeft size={19} /></span><div><h2>آخر الحركات المالية</h2><p>سجل الشحنات والخصومات المعتمدة</p></div></div>
