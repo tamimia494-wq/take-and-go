@@ -16,6 +16,7 @@ import { calculateCommissionFils, extractPriceAfterLabel } from "./pricing";
 type Webhook = {
   typeWebhook?: string;
   idMessage?: string;
+  timestamp?: number;
   senderData?: { chatId?: string; sender?: string };
   messageData?: Record<string, unknown>;
   // Green API journal records can also be replayed to this endpoint.
@@ -89,6 +90,7 @@ function normalizeIncomingWebhook(webhook: Webhook): Webhook | null {
   return {
     typeWebhook: "incomingMessageReceived",
     idMessage: webhook.idMessage,
+    timestamp: webhook.timestamp,
     senderData: { chatId: webhook.chatId, sender: webhook.senderId },
     messageData: {
       typeMessage: webhook.typeMessage,
@@ -103,6 +105,19 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   const data = webhook.messageData;
   const messageId = webhook.idMessage;
   if (!groupId || chatId !== groupId || !data || !messageId) return;
+
+  if (typeof webhook.timestamp === "number") {
+    const ageMs = Date.now() - webhook.timestamp * 1000;
+    const allParticipantsDeleteWindowMs = 60 * 60 * 60 * 1000;
+    if (ageMs > allParticipantsDeleteWindowMs) {
+      console.warn(`Skipping Green API message ${messageId}: it is older than WhatsApp's 60-hour delete window.`);
+      return;
+    }
+    if (ageMs < -5 * 60 * 1000) {
+      console.warn(`Skipping Green API message ${messageId}: its timestamp is more than 5 minutes in the future.`);
+      return;
+    }
+  }
 
   const type = stringValue(data.typeMessage);
   if (type === "reactionMessage") {
