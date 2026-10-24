@@ -1,0 +1,16 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Push Take and Go changes",
+      "type": "shell",
+      "command": "cmd",
+      "args": [
+        "/c",
+        "set GIT_CONFIG_COUNT=0&& set GIT_TERMINAL_PROMPT=0&& git push origin main"
+      ],
+      "isBackground": false,
+      "problemMatcher": []
+    }
+  ]
+}

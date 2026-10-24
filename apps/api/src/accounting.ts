@@ -5,6 +5,7 @@ import { MINIMUM_CAPTAIN_REPLY_BALANCE_FILS } from "./money";
 type ProcessResult =
   | {
       result: "charged";
+      captainName: string;
       amountFils: number;
       balanceFils: number;
       category: JobCategory;
@@ -171,6 +172,7 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
     });
     return {
       result: "charged",
+      captainName: reply.captain.fullName ?? reply.captain.phone,
       amountFils: reply.job.commissionFils,
       balanceFils: captain.id === creditedOwner.id ? creditedOwner.balanceFils : captain.balanceFils,
       category: reply.job.category,

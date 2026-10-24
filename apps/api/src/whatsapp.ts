@@ -300,7 +300,7 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     }
     if (result.result === "charged") {
       await sendGroupMessage(
-        `✅ تم اعتماد الطلب. تم خصم عمولة ${formatJod(result.amountFils)} د.أ من رصيد الكابتن، وإضافتها إلى رصيد صاحب الطلب. رصيد الكابتن بعد الخصم ${formatJod(result.balanceFils)} د.أ.`
+        `✅ تم اعتماد الطلب للكابتن ${result.captainName}. تم خصم عمولة ${formatJod(result.amountFils)} د.أ من رصيده وإضافتها إلى رصيد صاحب الطلب. رصيد الكابتن ${result.captainName} الآن ${formatJod(result.balanceFils)} د.أ.`
       );
       return;
     }
