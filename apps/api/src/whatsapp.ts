@@ -108,7 +108,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     });
     const rejection = !captain || captain.status !== "ACTIVE"
       ? "unregistered"
-      : captain.balanceFils < job.commissionFils ? "insufficient" : null;
+      : captain.balanceFils < Math.max(job.commissionFils, 750) ? "insufficient" : null;
     if (rejection) {
       const rejectedReply = await prisma.whatsAppReply.updateMany({
         where: { messageId, status: "PENDING" },
@@ -285,7 +285,7 @@ async function sendRejectedReplyNotice(
   commissionFils: number
 ): Promise<void> {
   const reason = rejection === "insufficient"
-    ? "رصيدك غير كافٍ"
+    ? "رصيدك غير كافٍ. الحد الأدنى المطلوب 0.75 د.أ"
     : "رقمك غير مسجل أو حسابك غير مفعل";
   await sendGroupMessage(
     `⚠️ ${reason}. قيمة الطلب ${priceDinars} د.أ وعمولته ${formatJod(commissionFils)} د.أ. يرجى التواصل مع الإدارة وشحن الرصيد لتتمكن من أخذ الطلبات.`

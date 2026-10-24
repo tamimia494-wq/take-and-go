@@ -83,7 +83,7 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
     }
 
     const debited = await tx.captain.updateMany({
-      where: { id: reply.captain.id, balanceFils: { gte: reply.job.commissionFils } },
+      where: { id: reply.captain.id, balanceFils: { gte: Math.max(reply.job.commissionFils, 750) } },
       data: { balanceFils: { decrement: reply.job.commissionFils } }
     });
     if (debited.count !== 1) {
