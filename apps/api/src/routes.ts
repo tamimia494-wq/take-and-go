@@ -150,8 +150,8 @@ router.get("/admin/whatsapp-jobs/:id", requireAuth("admin"), async (req, res) =>
   }
 
   const [job, ledger] = await Promise.all([
-    prisma.whatsAppJob.findUnique({
-      where: { id: jobId },
+    prisma.whatsAppJob.findFirst({
+      where: { OR: [{ id: jobId }, { sourceMessageId: jobId }] },
       include: {
         replies: {
           select: { messageId: true, senderPhone: true, status: true, createdAt: true }
