@@ -59,7 +59,7 @@ export async function deleteGroupMessage(messageId: string): Promise<void> {
   await greenApiRequest("deleteMessage", {
     chatId: groupId,
     idMessage: messageId,
-    onlySender: false
+    onlySenderDelete: false
   });
 }
 
