@@ -221,7 +221,7 @@ router.get("/admin/whatsapp-jobs/:id", requireAuth("admin"), async (req, res) =>
 router.get("/admin/whatsapp-jobs-search", requireAuth("admin"), async (req, res) => {
   const parsed = z.object({
     ownerPhone: z.string().min(8).max(24),
-    captainPhone: z.string().min(8).max(24),
+    captainPhone: z.string().min(8).max(24).optional(),
     from: z.string().datetime({ offset: true }),
     to: z.string().datetime({ offset: true })
   }).safeParse(req.query);
@@ -231,10 +231,10 @@ router.get("/admin/whatsapp-jobs-search", requireAuth("admin"), async (req, res)
   }
 
   let ownerPhone: string;
-  let captainPhone: string;
+  let captainPhone: string | undefined;
   try {
     ownerPhone = normalizePhone(parsed.data.ownerPhone);
-    captainPhone = normalizePhone(parsed.data.captainPhone);
+    captainPhone = parsed.data.captainPhone ? normalizePhone(parsed.data.captainPhone) : undefined;
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "رقم الهاتف غير صالح." });
     return;
@@ -251,13 +251,13 @@ router.get("/admin/whatsapp-jobs-search", requireAuth("admin"), async (req, res)
     where: {
       sourceSenderPhone: ownerPhone,
       createdAt: { gte: from, lte: to },
-      replies: { some: { senderPhone: captainPhone } }
+      ...(captainPhone ? { replies: { some: { senderPhone: captainPhone } } } : {})
     },
     take: 20,
     orderBy: { createdAt: "asc" },
     include: {
       replies: {
-        where: { senderPhone: captainPhone },
+        ...(captainPhone ? { where: { senderPhone: captainPhone } } : {}),
         select: { messageId: true, senderPhone: true, status: true, createdAt: true }
       }
     }
