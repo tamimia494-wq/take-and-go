@@ -14,6 +14,20 @@ test("extracts the amount following supported Arabic price labels", () => {
   assert.equal(extractPriceAfterLabel("سعر 0"), null);
 });
 
+test("reads توصيل exactly like سعر, with attached letters and separators", () => {
+  for (const label of ["سعر", "توصيل", "أجرة"]) {
+    assert.equal(extractPriceAfterLabel(`${label} 5`), 5, label);
+    assert.equal(extractPriceAfterLabel(`و${label} 6`), 6, label);
+    assert.equal(extractPriceAfterLabel(`بال${label} 7`), 7, label);
+    assert.equal(extractPriceAfterLabel(`${label} بـ8`), 8, label);
+    assert.equal(extractPriceAfterLabel(`${label}=9`), 9, label);
+  }
+  assert.equal(extractPriceAfterLabel("توصيله ١٠"), 10);
+  assert.equal(extractPriceAfterLabel("سعر التوصيل 7"), 7);
+  assert.equal(extractPriceAfterLabel("حساب 0797907580"), null);
+  assert.equal(extractPriceAfterLabel("وصلت 5"), null);
+});
+
 test("rounds each listed price to the nearest five-dinar unit", () => {
   assert.equal(calculateCommissionFils([5], 750), 750);
   assert.equal(calculateCommissionFils([6], 750), 750);

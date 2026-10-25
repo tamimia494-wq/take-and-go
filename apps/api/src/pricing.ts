@@ -2,7 +2,9 @@ import { normalizeDigits } from "./money";
 
 export function extractPriceAfterLabel(line: string): number | null {
   const normalized = normalizeDigits(line);
-  const match = /(?:^|[\s:：])(?:السعر|سعر|(?:ال)?(?:أجرة|اجرة|اجاره|أجره|اجره)|(?:ال)?توصيل|حسابه)\s*[:：-]?\s*(\d+)/u.exec(normalized);
+  // سعر / أجرة / توصيل are interchangeable, with a leading و/ب/ال (وتوصيل، بالسعر) or a trailing ه/ة (توصيله)
+  // and "ب"/"بـ" or = before the number (توصيل بـ5، سعر=5).
+  const match = /(?:^|[\s:：،,])(?:[وبف])?(?:ال|بال|لل)?(?:(?:سعر|توصيل|أجر|اجر|اجار)[هة]?|حسابه)\s*(?:[:：=-]\s*)?(?:بـ?\s*)?(\d+)/u.exec(normalized);
   if (!match) return null;
   const amount = Number(match[1]);
   return Number.isSafeInteger(amount) && amount > 0 && amount <= 2_147_483_647
