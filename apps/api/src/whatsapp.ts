@@ -367,6 +367,7 @@ export async function backfillReplyApprovalsFromHistory(count = 300): Promise<{
   const history = await fetchGroupHistory(count);
   const { jobsRecorded, repliesRecorded } = await recoverJobsAndRepliesFromHistory(history);
   const latestReaction = new Map<string, { actor: string; targetMessageId: string; reaction: string; timestamp: number }>();
+  const latestCancellation = new Map<string, { actor: string; timestamp: number }>();
   const reactions = history
     .filter((entry) => (stringValue(entry.typeMessage) ?? stringValue(entry.type)) === "reactionMessage")
     .sort((left, right) => Number(left.timestamp ?? 0) - Number(right.timestamp ?? 0));
@@ -381,6 +382,9 @@ export async function backfillReplyApprovalsFromHistory(count = 300): Promise<{
     const senderId = stringValue(entry.senderId) ?? "";
     const actor = phoneFromChatId(senderId) ?? (senderId ? await resolveGroupSenderPhone(senderId) : null);
     if (!targetMessageId || !actor) continue;
+    if (isCancellationReaction(reaction)) {
+      latestCancellation.set(targetMessageId, { actor, timestamp: Number(entry.timestamp ?? 0) });
+    }
     latestReaction.set(`${actor}|${targetMessageId}`, {
       actor,
       targetMessageId,
@@ -390,8 +394,34 @@ export async function backfillReplyApprovalsFromHistory(count = 300): Promise<{
   }
 
   let approvalsRecorded = 0;
+  for (const [targetMessageId, cancellation] of latestCancellation) {
+    const reply = await prisma.whatsAppReply.findUnique({
+      where: { messageId: targetMessageId },
+      include: { job: { select: { sourceSenderPhone: true } } }
+    });
+    if (!reply) continue;
+    const ownerReaction = reply.job.sourceSenderPhone
+      ? [...latestReaction.values()].find((reaction) =>
+        reaction.targetMessageId === targetMessageId && samePhone(reaction.actor, reply.job.sourceSenderPhone!))
+      : undefined;
+    // A fresh owner like after the ❌ wins.
+    if (ownerReaction && isLikeReaction(ownerReaction.reaction) && ownerReaction.timestamp > cancellation.timestamp) continue;
+    const authorized = [reply.senderPhone, reply.job.sourceSenderPhone].some((phone) => phone && samePhone(phone, cancellation.actor)) ||
+      await isGroupAdministrator(cancellation.actor);
+    if (!authorized) continue;
+    if (reply.status === "CHARGED") {
+      await cancelChargedJob(reply.messageId, cancellation.actor);
+    } else if (reply.approvedAt) {
+      await prisma.whatsAppReply.update({
+        where: { id: reply.id },
+        data: { approvedAt: null, approvedByPhone: null, likeRemovedAt: new Date(cancellation.timestamp * 1000) }
+      });
+    }
+  }
   for (const { actor, targetMessageId, reaction, timestamp } of latestReaction.values()) {
     if (!isLikeReaction(reaction)) continue;
+    const cancellation = latestCancellation.get(targetMessageId);
+    if (cancellation && cancellation.timestamp >= timestamp) continue;
     const reply = await prisma.whatsAppReply.findUnique({
       where: { messageId: targetMessageId },
       include: { job: { select: { sourceSenderPhone: true } } }
@@ -659,8 +689,6 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     const result = await removeJobLike(targetMessageId);
     if (result.result === "transferred") {
       console.info(`WhatsApp job ${reply.jobId} moved from captain ${result.fromCaptainId} to ${result.toCaptainId} after the owner removed 👍.`);
-    } else if (result.result === "owner_insufficient") {
-      console.warn(`Like removal on job ${reply.jobId} was refused: the owner's balance cannot return the commission.`);
     } else if (result.result === "released") {
       console.info(`WhatsApp job ${reply.jobId} was refunded to captain ${result.fromCaptainId}; no other reply has the owner's 👍.`);
     }
@@ -702,16 +730,12 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     const result = await cancelChargedJob(reply.messageId, actor);
     if (result.result === "canceled") {
       console.info(`WhatsApp job ${reply.job.id} commission was reversed after an authorized X reaction.`);
-    } else if (result.result === "owner_insufficient") {
-      console.warn(`WhatsApp job ${reply.job.id} was not reversed: the owner's balance cannot return the commission.`);
     } else if (result.result === "not_charged") {
       console.warn(`WhatsApp job ${reply.job.id} was not reversed after X: it was not charged.`);
-      if (reply.job.sourceSenderPhone && samePhone(reply.job.sourceSenderPhone, actor)) {
-        await prisma.whatsAppReply.updateMany({
-          where: { id: reply.id },
-          data: { approvedAt: null, approvedByPhone: null }
-        });
-      }
+      await prisma.whatsAppReply.updateMany({
+        where: { id: reply.id },
+        data: { approvedAt: null, approvedByPhone: null, likeRemovedAt: new Date() }
+      });
     }
   }
 }

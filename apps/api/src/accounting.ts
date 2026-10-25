@@ -24,15 +24,7 @@ type CancelResult =
       riderPriceDinars: number;
       orderPriceDinars: number;
     }
-  | { result: "already_canceled" | "not_charged" | "not_tracked" | "owner_insufficient"; amountFils: number };
-
-/** Thrown inside a transaction to roll it back when it would leave a balance below zero. */
-class NegativeBalanceError extends Error {}
-
-async function assertNotNegative(tx: Prisma.TransactionClient, captainIds: string[]): Promise<void> {
-  const negative = await tx.captain.count({ where: { id: { in: captainIds }, balanceFils: { lt: 0 } } });
-  if (negative) throw new NegativeBalanceError("A commission movement would leave a balance below zero.");
-}
+  | { result: "already_canceled" | "not_charged" | "not_tracked"; amountFils: number };
 
 export async function processJobReaction(replyMessageId: string): Promise<ProcessResult> {
   return prisma.$transaction(async (tx) => {
@@ -366,22 +358,13 @@ async function reverseJobCharge(
 type LikeRemovalResult =
   | { result: "transferred"; fromCaptainId: string; toCaptainId: string; amountFils: number }
   | { result: "released"; fromCaptainId: string; amountFils: number }
-  | { result: "approval_cleared" | "not_tracked" | "owner_insufficient" };
+  | { result: "approval_cleared" | "not_tracked" };
 
 /**
  * The owner took their 👍 off a reply. A charged reply loses the job and is refunded, and the job moves to the next
  * reply the owner liked; a reply still waiting in that queue just loses its place.
  */
 export async function removeJobLike(replyMessageId: string): Promise<LikeRemovalResult> {
-  try {
-    return await removeJobLikeInTransaction(replyMessageId);
-  } catch (error) {
-    if (error instanceof NegativeBalanceError) return { result: "owner_insufficient" };
-    throw error;
-  }
-}
-
-async function removeJobLikeInTransaction(replyMessageId: string): Promise<LikeRemovalResult> {
   return prisma.$transaction(async (tx) => {
     const reply = await tx.whatsAppReply.findUnique({
       where: { messageId: replyMessageId },
@@ -419,23 +402,14 @@ async function removeJobLikeInTransaction(replyMessageId: string): Promise<LikeR
       data: { status: JobStatus.PENDING }
     });
     const next = await chargeNextApprovedReply(tx, reply.jobId, []);
-    await assertNotNegative(tx, [owner.id]);
     return next
       ? { result: "transferred", fromCaptainId: reply.captainId, toCaptainId: next.captainId, amountFils: next.amountFils }
       : { result: "released", fromCaptainId: reply.captainId, amountFils: reply.job.commissionFils };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
+/** ❌ always refunds the charged captain, even when returning the commission takes the owner below zero. */
 export async function cancelChargedJob(replyMessageId: string, actorPhone: string): Promise<CancelResult> {
-  try {
-    return await cancelChargedJobInTransaction(replyMessageId, actorPhone);
-  } catch (error) {
-    if (error instanceof NegativeBalanceError) return { result: "owner_insufficient", amountFils: 0 };
-    throw error;
-  }
-}
-
-async function cancelChargedJobInTransaction(replyMessageId: string, actorPhone: string): Promise<CancelResult> {
   return prisma.$transaction(async (tx) => {
     const reply = await tx.whatsAppReply.findUnique({
       where: { messageId: replyMessageId },
@@ -487,7 +461,6 @@ async function cancelChargedJobInTransaction(replyMessageId: string, actorPhone:
       `عكس ${describeJobPrice(reply.job.riderPriceDinars, reply.job.orderPriceDinars)} بواسطة ${actorPhone}`,
       "عكس العمولة بسبب إلغاء الطلب"
     );
-    await assertNotNegative(tx, [owner.id]);
     return {
       result: "canceled",
       amountFils: reply.job.commissionFils,
