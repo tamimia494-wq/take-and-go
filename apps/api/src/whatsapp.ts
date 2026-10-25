@@ -12,6 +12,7 @@ import {
 } from "./money";
 import { cancelChargedJob, processJobReaction } from "./accounting";
 import { calculateCommissionFils, extractPriceAfterLabel } from "./pricing";
+import { isCancellationReaction } from "./reactions";
 
 type Webhook = {
   typeWebhook?: string;
@@ -350,16 +351,53 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     return;
   }
 
-  if (normalizedReaction === "❌") {
-    const reply = await prisma.whatsAppReply.findUnique({
+  if (isCancellationReaction(normalizedReaction)) {
+    let reply = await prisma.whatsAppReply.findUnique({
       where: { messageId: targetMessageId },
-      include: { job: { select: { sourceSenderPhone: true } } }
+      include: { job: { select: { id: true, sourceMessageId: true, sourceSenderPhone: true } } }
     });
-    if (!reply) return;
-    const isOwner = actor === reply.senderPhone || actor === reply.job.sourceSenderPhone;
-    if (!isOwner && !(await isGroupAdministrator(actor))) return;
+    if (!reply) {
+      const matchingReplies = await prisma.whatsAppReply.findMany({
+        where: {
+          job: {
+            groupId: config.greenApiGroupId!,
+            sourceMessageId: targetMessageId
+          },
+          status: { in: ["CHARGED", "CANCELED"] }
+        },
+        include: { job: { select: { id: true, sourceMessageId: true, sourceSenderPhone: true } } },
+        take: 2
+      });
+      if (matchingReplies.length === 1) {
+        [reply] = matchingReplies;
+      } else {
+        console.warn(
+          `Green API X reaction ${webhook.idMessage ?? "unknown"} could not resolve one charged reply for target ${targetMessageId}.`
+        );
+        return;
+      }
+    }
+    const isOwnerOrReplyingCaptain = [reply.senderPhone, reply.job.sourceSenderPhone]
+      .some((phone) => phone && samePhone(phone, actor));
+    if (!isOwnerOrReplyingCaptain && !(await isGroupAdministrator(actor))) {
+      console.warn(`Green API X reaction ${webhook.idMessage ?? "unknown"} ignored: actor is not authorized.`);
+      return;
+    }
 
-    await cancelChargedJob(targetMessageId, actor);
+    const result = await cancelChargedJob(reply.messageId, actor);
+    if (result.result === "canceled") {
+      console.info(`WhatsApp job ${reply.job.id} commission was reversed after an authorized X reaction.`);
+    } else if (result.result === "not_charged") {
+      console.warn(`WhatsApp job ${reply.job.id} was not reversed after X: it was not charged.`);
+    }
+  }
+}
+
+function samePhone(left: string, right: string): boolean {
+  try {
+    return normalizePhone(left) === normalizePhone(right);
+  } catch {
+    return false;
   }
 }
 
