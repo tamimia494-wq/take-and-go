@@ -588,9 +588,6 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   const quotedJob = sourceMessageId
     ? await prisma.whatsAppJob.findUnique({ where: { groupId_sourceMessageId: { groupId, sourceMessageId } } })
     : null;
-  if (sourceMessageId && !quotedJob && text && isConfirmation(text)) {
-    throw new Error(`Source job ${sourceMessageId} for confirmation ${messageId} is not available yet.`);
-  }
   const isCaptainConfirmation = Boolean(quotedJob);
   // Admin numbers are never deleted or balance-checked, but an admin who also has a captain account still posts
   // orders that earn them the commission.
@@ -614,10 +611,15 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     if (captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS) {
       console.warn(`Deleting Green API message ${messageId}: captain balance=${captain.balanceFils} fils is below the minimum.`);
       await deleteRejectedReplyMessage(messageId);
+      await sendLowBalanceNotice(senderPhone, captain.fullName);
       return;
     }
   }
   if (!text && !quotedJob) return;
+  // Checked after the account and balance checks, so a sender who must be deleted is never left waiting here.
+  if (sourceMessageId && !quotedJob && text && isConfirmation(text)) {
+    throw new Error(`Source job ${sourceMessageId} for confirmation ${messageId} is not available yet.`);
+  }
 
   if (quotedJob) {
     // Replies to a job that is already taken are kept too, so the job can move to them if the owner's like moves.
@@ -868,6 +870,22 @@ async function deleteRejectedReplyMessage(messageId: string): Promise<void> {
 function isExcludedAdminPhone(phone: string): boolean {
   return [config.adminContactPhone, ...config.excludedAdminPhones]
     .some((value) => phoneFromChatId(value) === phone);
+}
+
+const lowBalanceNoticeSentAt = new Map<string, number>();
+
+/** Tells the group why a message was deleted, at most once every 10 minutes per number. */
+async function sendLowBalanceNotice(phone: string, fullName: string | null): Promise<void> {
+  const lastSentAt = lowBalanceNoticeSentAt.get(phone) ?? 0;
+  if (Date.now() - lastSentAt < 10 * 60_000) return;
+  lowBalanceNoticeSentAt.set(phone, Date.now());
+  try {
+    await sendGroupMessage(
+      `⚠️ تم حذف رسالة ${fullName ?? "الكابتن"} لأن رصيده غير كافٍ أو بالسالب. لا يمكنه الكتابة أو أخذ الطلبات حتى يشحن رصيده.`
+    );
+  } catch (error) {
+    console.warn(`Could not send the low-balance notice for ${phone}:`, error);
+  }
 }
 
 async function sendRejectedReplyNotice(
