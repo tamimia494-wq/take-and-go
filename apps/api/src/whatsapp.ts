@@ -317,7 +317,10 @@ async function recoverJobsAndRepliesFromHistory(
     if (!messageId || !senderId) continue;
     const senderPhone = phoneFromChatId(senderId) ?? await resolveGroupSenderPhone(senderId);
     if (!senderPhone) continue;
-    const captain = await prisma.captain.findUnique({ where: { phone: senderPhone }, select: { id: true, status: true } });
+    const captain = await prisma.captain.findUnique({
+      where: { phone: senderPhone },
+      select: { id: true, status: true, balanceFils: true }
+    });
     if (!captain) continue;
     const sourceMessageId = stringValue(objectValue(entry.quotedMessage)?.stanzaId) ??
       stringValue(objectValue(entry.quotedMessage)?.idMessage) ??
@@ -333,6 +336,7 @@ async function recoverJobsAndRepliesFromHistory(
     if (job) {
       // Replies from accounts that are not active are deleted live, and admins do not take orders.
       if (captain.status !== "ACTIVE" || isExcludedAdminPhone(senderPhone)) continue;
+      if (await wasBelowMinimumBalance(captain, createdAt)) continue;
       const existing = await prisma.whatsAppReply.findUnique({ where: { messageId }, select: { id: true } });
       if (existing) continue;
       await prisma.whatsAppReply.create({
@@ -348,7 +352,9 @@ async function recoverJobsAndRepliesFromHistory(
       repliesRecorded += 1;
       continue;
     }
-    if (!text || (captain.status !== "ACTIVE" && !isExcludedAdminPhone(senderPhone))) continue;
+    if (!text) continue;
+    if (!isExcludedAdminPhone(senderPhone) &&
+      (captain.status !== "ACTIVE" || await wasBelowMinimumBalance(captain, createdAt))) continue;
     if (await recordJobFromMessage(groupId, messageId, senderPhone, text, createdAt)) jobsRecorded += 1;
   }
   return { jobsRecorded, repliesRecorded };
@@ -438,11 +444,29 @@ export async function backfillReplyApprovalsFromHistory(count = 300): Promise<{
   return { jobsRecorded, repliesRecorded, reactionsFound: reactions.length, approvalsRecorded };
 }
 
+/**
+ * True when the captain is below the minimum balance now and was already below it when the message was sent,
+ * read from the ledger. A message sent while the balance was fine is never treated as unauthorized afterwards.
+ */
+async function wasBelowMinimumBalance(
+  captain: { id: string; balanceFils: number },
+  sentAt: Date,
+  requiredFils = MINIMUM_CAPTAIN_REPLY_BALANCE_FILS
+): Promise<boolean> {
+  if (captain.balanceFils >= requiredFils) return false;
+  const entryBefore = await prisma.ledgerEntry.findFirst({
+    where: { captainId: captain.id, createdAt: { lte: sentAt } },
+    orderBy: { createdAt: "desc" },
+    select: { balanceAfterFils: true }
+  });
+  return (entryBefore?.balanceAfterFils ?? 0) < requiredFils;
+}
+
 const sweptMessageIds = new Set<string>();
 
 /**
  * Deletes recent group messages that live processing missed: anything from a number without an active account,
- * and fresh messages the system never recorded from captains below the minimum balance.
+ * and anything sent while the captain's balance was below the minimum.
  */
 export async function sweepUnauthorizedMessages(count = 100): Promise<{ deleted: number }> {
   const groupId = config.greenApiGroupId;
@@ -462,17 +486,21 @@ export async function sweepUnauthorizedMessages(count = 100): Promise<{ deleted:
     if (!senderPhone || isExcludedAdminPhone(senderPhone)) continue;
     const captain = await prisma.captain.findUnique({
       where: { phone: senderPhone },
-      select: { status: true, balanceFils: true }
+      select: { id: true, status: true, balanceFils: true }
     });
-    let unauthorized = !captain || captain.status !== "ACTIVE";
-    if (!unauthorized && captain!.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS && nowSeconds - timestamp <= 10 * 60) {
-      // A charged captain's balance can drop after a valid message, so only messages the system never recorded count.
-      const [job, reply] = await Promise.all([
-        prisma.whatsAppJob.findUnique({ where: { groupId_sourceMessageId: { groupId, sourceMessageId: messageId } }, select: { id: true } }),
-        prisma.whatsAppReply.findUnique({ where: { messageId }, select: { id: true } })
-      ]);
-      unauthorized = !job && !reply;
-    }
+    // A reply to an order also has to cover that order's commission.
+    const quotedId = stringValue(objectValue(entry.quotedMessage)?.stanzaId) ??
+      stringValue(objectValue(entry.quotedMessage)?.idMessage) ??
+      stringValue(objectValue(entry.extendedTextMessage)?.stanzaId);
+    const quotedJob = quotedId
+      ? await prisma.whatsAppJob.findUnique({
+        where: { groupId_sourceMessageId: { groupId, sourceMessageId: quotedId } },
+        select: { commissionFils: true }
+      })
+      : null;
+    const requiredFils = Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, quotedJob?.commissionFils ?? 0);
+    const unauthorized = !captain || captain.status !== "ACTIVE" ||
+      await wasBelowMinimumBalance(captain, new Date(timestamp * 1000), requiredFils);
     if (!unauthorized) continue;
     try {
       await deleteGroupMessage(messageId);
