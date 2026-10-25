@@ -276,13 +276,17 @@ export default function AdminHome() {
     setError("");
     setNotice("");
     try {
-      const result = await api<CommissionAudit>("/admin/commission-audit", token);
+      const result = await api<CommissionAudit>("/admin/commission-audit", token, {
+        signal: AbortSignal.timeout(20000)
+      });
       setCommissionAudit(result);
       setNotice(result.issueCount
         ? `انتهى فحص ${result.checkedJobs} طلباً، ووجد ${result.issueCount} حالة تحتاج مراجعة. لم يتم تعديل أي رصيد.`
         : `انتهى فحص ${result.checkedJobs} طلباً؛ الحركات متطابقة ولا توجد فروقات.`);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر فحص العمولات.");
+      setError(reason instanceof DOMException && reason.name === "TimeoutError"
+        ? "استغرق فحص العمولات أكثر من 20 ثانية. انتهى الطلب تلقائياً؛ أعد المحاولة بعد قليل."
+        : reason instanceof Error ? reason.message : "تعذر فحص العمولات.");
     } finally {
       setBusy(false);
     }

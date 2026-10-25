@@ -233,6 +233,7 @@ router.get("/admin/commission-audit", requireAuth("admin"), async (_req, res) =>
   const ownerPhones = [...new Set(jobs
     .map((job) => job.sourceSenderPhone)
     .filter((phone): phone is string => phone !== null))];
+  const jobIds = jobs.map((job) => job.id);
   const [captains, entries] = await Promise.all([
     prisma.captain.findMany({
       where: { phone: { in: ownerPhones } },
@@ -240,7 +241,7 @@ router.get("/admin/commission-audit", requireAuth("admin"), async (_req, res) =>
     }),
     prisma.ledgerEntry.findMany({
       where: {
-        reference: { not: null },
+        reference: { in: jobIds },
         type: { in: [LedgerType.ORDER_COMMISSION, LedgerType.RIDER_COMMISSION, LedgerType.ADJUSTMENT] }
       },
       select: { reference: true, captainId: true, type: true, amountFils: true }
