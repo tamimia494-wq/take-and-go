@@ -319,14 +319,19 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   if (!senderPhone) {
     throw new Error(`Sender ID for Green API message ${messageId} could not be mapped to a phone number yet.`);
   }
-  if (isExcludedAdminPhone(senderPhone)) {
-    return;
-  }
   const text = messageText(data);
   if (!text) return;
   const sourceMessageId = quotedMessageId(data);
   const isCaptainConfirmation = isConfirmation(text) && Boolean(sourceMessageId);
-  {
+  // Admin numbers are never deleted or balance-checked, but an admin who also has a captain account still posts
+  // orders that earn them the commission.
+  const excludedAdmin = isExcludedAdminPhone(senderPhone);
+  if (excludedAdmin) {
+    if (isCaptainConfirmation) return;
+    const adminCaptain = await prisma.captain.findUnique({ where: { phone: senderPhone }, select: { id: true } });
+    if (!adminCaptain) return;
+  }
+  if (!excludedAdmin) {
     const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
     if (!captain || captain.status !== "ACTIVE") {
       if (isCaptainConfirmation && captain?.status === "PENDING_PROFILE") {
