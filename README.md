@@ -1,19 +1,19 @@
 # Take & Go
 
-منصة عربية لإدارة الكباتن والعمولات، بواجهتين منفصلتين للكابتن والإدارة، وواجهة API مشتركة. يستخدم المشروع Neon PostgreSQL للتخزين، وGreen API لربط مجموعة واتساب، وRailway لاستضافة الخدمات.
+منصة عربية لإدارة الكباتن والعمولات، بواجهتين منفصلتين للكابتن والإدارة، وواجهة API مشتركة. يستخدم المشروع PostgreSQL الموجود في Railway للتخزين، وGreen API لربط مجموعة واتساب، وRailway لاستضافة الخدمات.
 
 ## مكونات المشروع
 
 - `apps/captain`: موقع الكابتن (منفصل في النشر).
 - `apps/admin`: لوحة الإدارة (منفصلة في النشر).
 - `apps/api`: المصادقة، الأرصدة، الجرد، الحسابات المالية، Webhook الخاص بـ Green API، والخصم الأسبوعي.
-- Neon: قاعدة البيانات المشتركة بين المواقع والخدمات.
+- Railway Postgres: قاعدة البيانات المشتركة بين المواقع والخدمات. استخدم قاعدة المشروع الموجودة ولا تنشئ قاعدة إنتاج إضافية.
 
 ## التشغيل المحلي
 
 1. ثبّت Node.js 20 أو أحدث.
-2. أنشئ قاعدة PostgreSQL في Neon، وانسخ رابط الاتصال pooled إلى `DATABASE_URL` ورابط الاتصال المباشر إلى `DIRECT_URL`.
-3. انسخ `.env.example` إلى `.env` واملأ بيانات Neon و`JWT_SECRET` وبيانات الإدارة. يمكن تأجيل متغيرات Green API إلى الخطوة الأخيرة؛ يعمل الـ API دونها، وتظل وظائف واتساب متوقفة حتى إعدادها.
+2. جهّز قاعدة PostgreSQL محلية للتطوير فقط، واضبط `DATABASE_URL` و`DIRECT_URL` في `.env`. لا توصل بيئة التطوير بقاعدة الإنتاج ولا تشغّل seed أو migrations عليها.
+3. انسخ `.env.example` إلى `.env` واملأ بيانات قاعدة التطوير و`JWT_SECRET` وبيانات الإدارة. يمكن تأجيل متغيرات Green API إلى الخطوة الأخيرة؛ يعمل الـ API دونها، وتظل وظائف واتساب متوقفة حتى إعدادها.
 4. من جذر المشروع شغّل:
 
    ```powershell
@@ -48,19 +48,9 @@
 
 > استورد أعضاء المجموعة فقط بعد التأكد من صلاحية استخدام أرقامهم وإبلاغ المشاركين بسياسة الخصوصية المناسبة. هذه المنصة لا تنفذ رسائل تسويقية أو تواصل جماعي.
 
-## النشر على Render (مجاني، بدون بطاقة)
+## النشر على Railway
 
-المستودع يحتوي `render.yaml` (Blueprint) ينشئ الخدمات الثلاث + قاعدة بيانات Postgres تلقائيًا:
-
-1. ارفع آخر تغييرات إلى GitHub.
-2. في [Render](https://dashboard.render.com) → **New → Blueprint** → اختر المستودع → **Apply**. سيطلب Render القيم السرية المعرفة في Blueprint؛ أدخلها لخدمة `take-and-go-api` ولا تحفظها في Git.
-3. في خدمة `take-and-go-api` → **Environment**، اضبط `ADMIN_PASSWORD` وكلاً من `GREEN_API_INSTANCE_ID`, `GREEN_API_TOKEN`, و`GREEN_API_GROUP_ID` باستخدام القيم الحقيقية من لوحة Green API. يمكن كتابة معرّف المجموعة بصيغة `...@g.us` أو الأرقام فقط. اضغط **Save, rebuild, and deploy** لتطبيق الإعدادات.
-4. لتفعيل Webhook للرسائل الواردة، اضبط `GREEN_API_WEBHOOK_TOKEN` على سر عشوائي، واستخدم السر نفسه في ترويسة `Authorization` لإعداد Webhook في Green API. استخدم العنوان `https://<api-domain>/webhooks/green-api` وفعّل `incomingWebhook`.
-5. بعد النشر، من لوحة الإدارة اضغط **فحص اتصال Green API**. يجب أن تظهر حالة Instance كـ `authorized` وأن تظهر المجموعة وعدد المشاركين. إذا استمر خطأ الإعداد، راجع المتغيرات في Environment وأعد نشر خدمة API.
-
-## النشر (مزوّدون آخرون)
-
-يمكن نشر المشروع على أي مزوّد يدعم Node.js (مثل Railway). أنشئ ثلاثة Services من المستودع نفسه، واجعل **Root Directory** لكل خدمة `/`:
+استخدم مشروع Railway الحالي وخدماته الثلاث وقاعدة Postgres المرتبطة به. لا تنشئ مشروعاً أو قاعدة بيانات إنتاج جديدة. اجعل **Root Directory** لكل خدمة `/`:
 
 | الخدمة | Build Command | Start Command |
 | --- | --- | --- |
@@ -68,20 +58,20 @@
 | Captain | `npm ci && npm run build --workspace @take-and-go/captain` | `npm run start --workspace @take-and-go/captain` |
 | Admin | `npm ci && npm run build --workspace @take-and-go/admin` | `npm run start --workspace @take-and-go/admin` |
 
-استخدم نطاقاً مستقلاً لكل خدمة ويب (`captain`, `admin`) ونطاقاً لخدمة API. عيّن **Pre-deploy Command** لخدمة API إلى `npm run db:migrate --workspace @take-and-go/api` حتى تُطبق migrations قبل تشغيل الخدمة، وعيّن المتغيرات التالية:
+استخدم نطاق Railway مستقلاً لكل خدمة ويب (`captain`, `admin`) ونطاقاً لخدمة API. عيّن **Pre-deploy Command** لخدمة API إلى `npm run db:migrate --workspace @take-and-go/api` حتى تُطبق migrations قبل تشغيل الخدمة، وعيّن المتغيرات التالية:
 
 - API: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`, `ADMIN_PASSWORD`, `GREEN_API_URL`, `GREEN_API_INSTANCE_ID`, `GREEN_API_TOKEN`, `GREEN_API_GROUP_ID`, `GREEN_API_WEBHOOK_TOKEN`, `CAPTAIN_APP_URL`, `ADMIN_APP_URL`, `TZ=Asia/Amman`.
 - Captain وAdmin: `NEXT_PUBLIC_API_URL=https://<api-domain>/api`.
 - `CAPTAIN_APP_URL` و`ADMIN_APP_URL` في خدمة API يجب أن يطابقا نطاقَي الويب دون `/` في النهاية.
-- قاعدة البيانات Neon مشتركة؛ لا تضع بيانات الاتصال في إعدادات الواجهة الأمامية.
+- قاعدة Railway Postgres مشتركة؛ لا تضع بيانات الاتصال في إعدادات الواجهتين الأماميتين.
 
-بعد نشر API لأول مرة، شغّل مرة واحدة في Railway Shell:
+بعد إعداد قاعدة Railway الحالية لأول مرة فقط، شغّل seed مرة واحدة في Railway Shell:
 
 ```powershell
 npm run db:seed --workspace @take-and-go/api
 ```
 
-يسجل المسؤول الدخول بكلمة المرور فقط. ينشئ seed حساب الإدارة من `ADMIN_PASSWORD`، ولا يقبل كلمة المرور الافتراضية الموجودة في ملف المثال. استخدم كلمة مرور قوية وفريدة واحفظها في متغير Railway السري؛ لا تضعها في Git أو المحادثات.
+يسجل المسؤول الدخول بكلمة المرور فقط. ينشئ seed حساب الإدارة من `ADMIN_PASSWORD`، ولا يقبل كلمة المرور الافتراضية الموجودة في ملف المثال. لا تعِد تشغيل seed مع كل نشر لأنه يعيد تعيين كلمة مرور الإدارة. استخدم كلمة مرور قوية وفريدة واحفظها في متغير Railway السري؛ لا تضعها في Git أو المحادثات.
 
 ## المحاسبة
 

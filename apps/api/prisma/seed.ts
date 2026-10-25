@@ -12,7 +12,7 @@ async function main() {
 
   await prisma.admin.upsert({
     where: { id: "admin" },
-    update: { passwordHash: await bcrypt.hash(password, 12) },
+    update: {},
     create: { id: "admin", passwordHash: await bcrypt.hash(password, 12) }
   });
   await prisma.appSettings.upsert({
