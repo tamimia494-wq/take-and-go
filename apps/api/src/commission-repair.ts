@@ -53,7 +53,7 @@ export async function runCommissionAudit(db: Prisma.TransactionClient | typeof p
  * job. Runs on a schedule and from the admin dashboard; entries carry idempotency keys so repeated runs are safe.
  */
 export async function repairCommissions(historyCount = 300) {
-  let history: { reactionsFound: number; approvalsRecorded: number } | null = null;
+  let history: Awaited<ReturnType<typeof backfillReplyApprovalsFromHistory>> | null = null;
   let historyError: string | null = null;
   try {
     history = await backfillReplyApprovalsFromHistory(historyCount);

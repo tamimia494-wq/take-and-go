@@ -73,6 +73,20 @@ const server = app.listen(config.port, () => {
       console.error("Startup chat history replay failed:", error);
     });
   }, 5_000);
+  // Rebuild orders, replies and likes still in the group history that never reached the database, then charge them.
+  setTimeout(() => {
+    void repairCommissions(1000)
+      .then((result) => {
+        console.info(
+          `Startup commission recovery: ${result.history?.jobsRecorded ?? 0} jobs, ${result.history?.repliesRecorded ?? 0} replies, ` +
+          `${result.history?.approvalsRecorded ?? 0} likes recovered; charged ${result.likedCharged.length}, added ${result.entriesCreated} entries.`
+        );
+        if (result.historyError) console.warn("Startup commission recovery could not read group history:", result.historyError);
+      })
+      .catch((error: unknown) => {
+        console.error("Startup commission recovery failed:", error);
+      });
+  }, 30_000);
 });
 
 async function shutdown(): Promise<void> {

@@ -225,12 +225,136 @@ export async function replayRecentMessages(minutes = 15): Promise<{ replayed: nu
   return { replayed, skipped };
 }
 
+/** Stores a group message with prices as a job. Returns false when it has no price or is already stored. */
+async function recordJobFromMessage(
+  groupId: string,
+  messageId: string,
+  senderPhone: string,
+  text: string,
+  createdAt?: Date
+): Promise<boolean> {
+  const items = text.split(/\r?\n/).map((line) => {
+    const priceDinars = extractPriceAfterLabel(line);
+    return priceDinars === null ? null : { priceDinars, category: isOrder(line) ? JobCategory.ORDER : JobCategory.RIDER };
+  }).filter((item) => item !== null);
+  if (items.length === 0) return false;
+  const riderPriceDinars = items
+    .filter((item) => item.category === JobCategory.RIDER)
+    .reduce((sum, item) => sum + item.priceDinars, 0);
+  const orderPriceDinars = items
+    .filter((item) => item.category === JobCategory.ORDER)
+    .reduce((sum, item) => sum + item.priceDinars, 0);
+  const priceDinars = riderPriceDinars + orderPriceDinars;
+  if (!Number.isSafeInteger(priceDinars) || priceDinars > 2_147_483_647) {
+    throw new Error("The WhatsApp job price exceeds the supported range.");
+  }
+  const category = riderPriceDinars > 0 && orderPriceDinars > 0
+    ? JobCategory.MIXED
+    : orderPriceDinars > 0 ? JobCategory.ORDER : JobCategory.RIDER;
+  const settings = await prisma.appSettings.findUnique({ where: { id: "default" } });
+  if (!settings) throw new Error("Application settings have not been initialized.");
+  const riderCommissionFils = calculateCommissionFils(
+    items.filter((item) => item.category === JobCategory.RIDER).map((item) => item.priceDinars),
+    settings.riderCommissionPerFiveFils
+  );
+  const orderCommissionFils = calculateCommissionFils(
+    items.filter((item) => item.category === JobCategory.ORDER).map((item) => item.priceDinars),
+    settings.orderCommissionPerFiveFils
+  );
+  const commissionFils = riderCommissionFils + orderCommissionFils;
+  if (!Number.isSafeInteger(commissionFils) || commissionFils > 2_147_483_647) {
+    throw new Error("The configured commission exceeds the supported range.");
+  }
+
+  try {
+    await prisma.whatsAppJob.create({
+      data: {
+        groupId,
+        sourceMessageId: messageId,
+        sourceSenderPhone: senderPhone,
+        ...(createdAt ? { createdAt } : {}),
+        priceDinars,
+        riderPriceDinars,
+        orderPriceDinars,
+        category,
+        commissionFils,
+        riderCommissionFils,
+        orderCommissionFils
+      }
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return false;
+    throw error;
+  }
+  return true;
+}
+
+/**
+ * Rebuilds orders and "تم" confirmations that are still in the group but never reached the database, for example
+ * when a webhook was lost. It never deletes messages or posts notices; messages the bot removed are skipped.
+ */
+async function recoverJobsAndRepliesFromHistory(
+  history: Array<Record<string, unknown>>
+): Promise<{ jobsRecorded: number; repliesRecorded: number }> {
+  const groupId = config.greenApiGroupId;
+  if (!groupId) return { jobsRecorded: 0, repliesRecorded: 0 };
+  const oldestTimestamp = Date.now() / 1000 - 60 * 60 * 60;
+  const messages = history
+    .filter((entry) => stringValue(entry.type) === "incoming" && entry.isDeleted !== true)
+    .filter((entry) => (stringValue(entry.typeMessage) ?? "") !== "reactionMessage")
+    .filter((entry) => Number(entry.timestamp ?? 0) >= oldestTimestamp)
+    .sort((left, right) => Number(left.timestamp ?? 0) - Number(right.timestamp ?? 0));
+  let jobsRecorded = 0;
+  let repliesRecorded = 0;
+  for (const entry of messages) {
+    const messageId = stringValue(entry.idMessage);
+    const text = stringValue(entry.textMessage) ??
+      stringValue(objectValue(entry.extendedTextMessage)?.text) ??
+      stringValue(objectValue(entry.textMessageData)?.textMessage) ??
+      stringValue(objectValue(entry.extendedTextMessageData)?.text);
+    const senderId = stringValue(entry.senderId) ?? "";
+    if (!messageId || !text || !senderId) continue;
+    const senderPhone = phoneFromChatId(senderId) ?? await resolveGroupSenderPhone(senderId);
+    if (!senderPhone) continue;
+    const captain = await prisma.captain.findUnique({ where: { phone: senderPhone }, select: { id: true, status: true } });
+    if (!captain) continue;
+    const sourceMessageId = stringValue(objectValue(entry.quotedMessage)?.stanzaId) ??
+      stringValue(objectValue(entry.quotedMessage)?.idMessage) ??
+      stringValue(objectValue(entry.extendedTextMessage)?.stanzaId);
+    const createdAt = new Date(Number(entry.timestamp) * 1000);
+
+    if (isConfirmation(text) && sourceMessageId) {
+      const job = await prisma.whatsAppJob.findUnique({
+        where: { groupId_sourceMessageId: { groupId, sourceMessageId } },
+        select: { id: true }
+      });
+      if (!job) continue;
+      const existing = await prisma.whatsAppReply.findUnique({ where: { messageId }, select: { id: true } });
+      if (existing) continue;
+      await prisma.whatsAppReply.create({
+        data: { messageId, senderPhone, jobId: job.id, captainId: captain.id, body: text, createdAt }
+      });
+      repliesRecorded += 1;
+      continue;
+    }
+    if (captain.status !== "ACTIVE" && !isExcludedAdminPhone(senderPhone)) continue;
+    if (await recordJobFromMessage(groupId, messageId, senderPhone, text, createdAt)) jobsRecorded += 1;
+  }
+  return { jobsRecorded, repliesRecorded };
+}
+
 /**
  * Recovers owner 👍 approvals from the group history, for likes that arrived before approvals were stored.
  * Only the latest reaction of each person on a reply counts, so a removed like or a later ❌ is not an approval.
  */
-export async function backfillReplyApprovalsFromHistory(count = 300): Promise<{ reactionsFound: number; approvalsRecorded: number }> {
+export async function backfillReplyApprovalsFromHistory(count = 300): Promise<{
+  jobsRecorded: number;
+  repliesRecorded: number;
+  reactionsFound: number;
+  approvalsRecorded: number;
+}> {
   const history = await fetchGroupHistory(count);
+  const { jobsRecorded, repliesRecorded } = await recoverJobsAndRepliesFromHistory(history);
   const latestReaction = new Map<string, { actor: string; targetMessageId: string; reaction: string; timestamp: number }>();
   const reactions = history
     .filter((entry) => (stringValue(entry.typeMessage) ?? stringValue(entry.type)) === "reactionMessage")
@@ -270,7 +394,7 @@ export async function backfillReplyApprovalsFromHistory(count = 300): Promise<{ 
     });
     approvalsRecorded += recorded.count;
   }
-  return { reactionsFound: reactions.length, approvalsRecorded };
+  return { jobsRecorded, repliesRecorded, reactionsFound: reactions.length, approvalsRecorded };
 }
 
 function normalizeIncomingWebhook(webhook: Webhook): Webhook | null {
@@ -390,58 +514,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     return;
   }
 
-  const items = text.split(/\r?\n/).map((line) => {
-    const priceDinars = extractPriceAfterLabel(line);
-    return priceDinars === null ? null : { priceDinars, category: isOrder(line) ? JobCategory.ORDER : JobCategory.RIDER };
-  }).filter((item) => item !== null);
-  if (items.length === 0) return;
-  const riderPriceDinars = items
-    .filter((item) => item.category === JobCategory.RIDER)
-    .reduce((sum, item) => sum + item.priceDinars, 0);
-  const orderPriceDinars = items
-    .filter((item) => item.category === JobCategory.ORDER)
-    .reduce((sum, item) => sum + item.priceDinars, 0);
-  const priceDinars = riderPriceDinars + orderPriceDinars;
-  if (!Number.isSafeInteger(priceDinars) || priceDinars > 2_147_483_647) {
-    throw new Error("The WhatsApp job price exceeds the supported range.");
-  }
-  const category = riderPriceDinars > 0 && orderPriceDinars > 0
-    ? JobCategory.MIXED
-    : orderPriceDinars > 0 ? JobCategory.ORDER : JobCategory.RIDER;
-  const settings = await prisma.appSettings.findUnique({ where: { id: "default" } });
-  if (!settings) throw new Error("Application settings have not been initialized.");
-  const riderCommissionFils = calculateCommissionFils(
-    items.filter((item) => item.category === JobCategory.RIDER).map((item) => item.priceDinars),
-    settings.riderCommissionPerFiveFils
-  );
-  const orderCommissionFils = calculateCommissionFils(
-    items.filter((item) => item.category === JobCategory.ORDER).map((item) => item.priceDinars),
-    settings.orderCommissionPerFiveFils
-  );
-  const commissionFils = riderCommissionFils + orderCommissionFils;
-  if (!Number.isSafeInteger(commissionFils) || commissionFils > 2_147_483_647) {
-    throw new Error("The configured commission exceeds the supported range.");
-  }
-
-  try {
-    await prisma.whatsAppJob.create({
-      data: {
-        groupId: chatId,
-        sourceMessageId: messageId,
-        sourceSenderPhone: senderPhone,
-        priceDinars,
-        riderPriceDinars,
-        orderPriceDinars,
-        category,
-        commissionFils,
-        riderCommissionFils,
-        orderCommissionFils
-      }
-    });
-  } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") return;
-    throw error;
-  }
+  await recordJobFromMessage(chatId, messageId, senderPhone, text);
 }
 
 async function handleReaction(webhook: Webhook, data: Record<string, unknown>): Promise<void> {
