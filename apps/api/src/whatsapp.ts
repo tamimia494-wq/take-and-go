@@ -330,6 +330,8 @@ async function recoverJobsAndRepliesFromHistory(
       })
       : null;
     if (job) {
+      // Replies from accounts that are not active are deleted live, and admins do not take orders.
+      if (captain.status !== "ACTIVE" || isExcludedAdminPhone(senderPhone)) continue;
       const existing = await prisma.whatsAppReply.findUnique({ where: { messageId }, select: { id: true } });
       if (existing) continue;
       await prisma.whatsAppReply.create({
@@ -473,9 +475,6 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   if (!excludedAdmin) {
     const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
     if (!captain || captain.status !== "ACTIVE") {
-      if (isCaptainConfirmation && captain?.status === "PENDING_PROFILE") {
-        throw new Error(`Captain ${senderPhone} must complete profile activation before confirmation ${messageId} can be processed.`);
-      }
       console.warn(
         `Deleting Green API message ${messageId}: sender account is ${!captain ? "unregistered" : captain.status.toLowerCase()}, ` +
         `balance=${captain?.balanceFils ?? "unknown"} fils.`
