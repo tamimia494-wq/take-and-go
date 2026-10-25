@@ -20,6 +20,11 @@ export function calculateCommissionFils(pricesDinars: number[], commissionPerFiv
     if (!Number.isSafeInteger(priceDinars) || priceDinars <= 0) {
       throw new Error("Prices must be positive whole dinars.");
     }
-    return total + Math.round(priceDinars / 5) * commissionPerFiveFils;
+    return total + commissionUnits(priceDinars) * commissionPerFiveFils;
   }, 0);
+}
+
+/** One commission per full five dinars, and at least one: under 10 is 1, 10–14 is 2, 15–19 is 3, and so on. */
+export function commissionUnits(priceDinars: number): number {
+  return priceDinars > 0 ? Math.max(1, Math.floor(priceDinars / 5)) : 0;
 }

@@ -5,6 +5,7 @@ import { z } from "zod";
 import { adminLogin, captainLogin, requireAuth } from "./auth";
 import { repairCommissions, runCommissionAudit } from "./commission-repair";
 import { prisma } from "./db";
+import { commissionUnits } from "./pricing";
 import { fromFils, MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, normalizePhone, phoneFromChatId, toFils } from "./money";
 import { getDeletionStatus, importGroupCaptains, isExcludedPhone } from "./whatsapp";
 import { greenApiRequest } from "./green-api";
@@ -115,8 +116,8 @@ router.get("/captain/dashboard", requireAuth("captain"), async (req, res) => {
       take: 100
     })
   ]);
-  const orderUnits = jobs.reduce((sum, job) => sum + Math.round(job.orderPriceDinars / 5), 0);
-  const riderUnits = jobs.reduce((sum, job) => sum + Math.round(job.riderPriceDinars / 5), 0);
+  const orderUnits = jobs.reduce((sum, job) => sum + commissionUnits(job.orderPriceDinars), 0);
+  const riderUnits = jobs.reduce((sum, job) => sum + commissionUnits(job.riderPriceDinars), 0);
   res.json({
     balanceJod: fromFils(captain.balanceFils),
     statistics: {

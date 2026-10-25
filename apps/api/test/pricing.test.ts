@@ -28,14 +28,16 @@ test("reads توصيل exactly like سعر, with attached letters and separators
   assert.equal(extractPriceAfterLabel("وصلت 5"), null);
 });
 
-test("rounds each listed price to the nearest five-dinar unit", () => {
+test("charges one commission per full five dinars, at least one", () => {
+  assert.equal(calculateCommissionFils([1], 750), 750);
+  assert.equal(calculateCommissionFils([4], 750), 750);
   assert.equal(calculateCommissionFils([5], 750), 750);
-  assert.equal(calculateCommissionFils([6], 750), 750);
-  assert.equal(calculateCommissionFils([7], 750), 750);
-  assert.equal(calculateCommissionFils([8], 750), 1500);
-  assert.equal(calculateCommissionFils([9], 750), 1500);
+  assert.equal(calculateCommissionFils([9], 750), 750);
   assert.equal(calculateCommissionFils([10], 750), 1500);
-  assert.equal(calculateCommissionFils([12], 750), 1500);
-  assert.equal(calculateCommissionFils([13], 750), 2250);
-  assert.equal(calculateCommissionFils([6, 8], 750), 2250);
+  assert.equal(calculateCommissionFils([14], 750), 1500);
+  assert.equal(calculateCommissionFils([15], 750), 2250);
+  assert.equal(calculateCommissionFils([19], 750), 2250);
+  assert.equal(calculateCommissionFils([20], 750), 3000);
+  assert.equal(calculateCommissionFils([24], 1000), 4000);
+  assert.equal(calculateCommissionFils([7, 12], 750), 2250);
 });
