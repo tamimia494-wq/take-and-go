@@ -183,22 +183,36 @@ export async function replayRecentMessages(minutes = 15): Promise<{ replayed: nu
     if (!messageId) { skipped += 1; continue; }
     try {
       const senderId = stringValue(record.senderId) ?? "";
-      const text = stringValue(record.textMessage);
+      const text = stringValue(record.textMessage) ??
+        stringValue(objectValue(record.textMessageData)?.textMessage) ??
+        stringValue(objectValue(record.extendedTextMessageData)?.text);
+      const messageData = {
+        ...record,
+        ...objectValue(record.messageData),
+        typeMessage: stringValue(record.typeMessage) ?? stringValue(record.type),
+        ...(text === undefined ? {} : {
+          textMessageData: {
+            ...objectValue(record.textMessageData),
+            textMessage: text
+          }
+        })
+      };
       const webhook: Webhook = {
         typeWebhook: "incomingMessageReceived",
         idMessage: messageId,
         timestamp: typeof record.timestamp === "number" ? record.timestamp : undefined,
         senderData: { chatId: config.greenApiGroupId, sender: senderId },
-        messageData: {
-          typeMessage: stringValue(record.type),
-          ...(text === undefined ? {} : { textMessageData: { textMessage: text } })
-        }
+        messageData
       };
       const event = await prisma.whatsAppWebhookEvent.upsert({
         where: { eventId: messageId },
         create: { eventId: messageId, payload: webhook as Prisma.InputJsonValue },
         update: {},
         select: { id: true }
+      });
+      await prisma.whatsAppWebhookEvent.updateMany({
+        where: { id: event.id, status: WebhookEventStatus.PENDING },
+        data: { payload: webhook as Prisma.InputJsonValue }
       });
       await processWebhookEvent(event.id);
       replayed += 1;
