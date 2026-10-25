@@ -637,17 +637,11 @@ router.post("/admin/commission-transfer", requireAuth("admin"), async (req, res)
         return { error: "لم يتم العثور على حساب المستهلك أو المنتج.", status: 404 as const };
       }
 
-      const debit = await tx.captain.updateMany({
-        where: { id: consumer.id, balanceFils: { gte: amountFils } },
+      // An admin transfer is taken whatever the consumer's balance, even below zero.
+      const updatedConsumer = await tx.captain.update({
+        where: { id: consumer.id },
         data: { balanceFils: { decrement: amountFils } }
       });
-      if (debit.count !== 1) {
-        return {
-          error: `رصيد المستهلك غير كافٍ. الرصيد الحالي: ${fromFils(consumer.balanceFils)} د.أ.`,
-          status: 400 as const
-        };
-      }
-      const updatedConsumer = await tx.captain.findUniqueOrThrow({ where: { id: consumer.id } });
       const updatedProduct = await tx.captain.update({
         where: { id: product.id },
         data: { balanceFils: { increment: amountFils } }

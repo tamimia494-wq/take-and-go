@@ -572,7 +572,7 @@ export default function AdminHome() {
               <label>قيمة العمولة بالدينار<input name="amount" type="number" min="0.001" step="0.001" placeholder="0.000" required /></label>
               <button className="button primary" disabled={busy}><CircleDollarSign size={16} /> تنفيذ التحويل</button>
             </form>
-            <p className="hint">يشترط وجود الحسابين وتوفر رصيد كافٍ للمستهلك. تُسجل حركتا الخصم والإضافة في سجل الحسابين.</p>
+            <p className="hint">يشترط وجود الحسابين، وتُخصم العمولة من المستهلك مهما كان رصيده حتى لو صار بالسالب. تُسجل حركتا الخصم والإضافة في سجل الحسابين.</p>
           </article>
           <article className="panel commission-audit-panel">
             <div className="panel-heading"><span className="panel-icon"><BadgeCheck size={19} /></span><div><h2>تدقيق دفتر العمولات</h2><p>مطابقة خصم الكابتن وإضافة صاحب الطلب وعكس الإلغاء. يُخصم تلقائياً كل 5 دقائق أي رد عليه لايك ولم تُخصم عمولته.</p></div></div>
