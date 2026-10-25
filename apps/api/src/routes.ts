@@ -218,6 +218,88 @@ router.get("/admin/whatsapp-jobs/:id", requireAuth("admin"), async (req, res) =>
   });
 });
 
+router.get("/admin/whatsapp-jobs-search", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({
+    ownerPhone: z.string().min(8).max(24),
+    captainPhone: z.string().min(8).max(24),
+    from: z.string().datetime({ offset: true }),
+    to: z.string().datetime({ offset: true })
+  }).safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: "أدخل رقمي صاحب الطلب والكابتن وفترة زمنية صحيحة." });
+    return;
+  }
+
+  let ownerPhone: string;
+  let captainPhone: string;
+  try {
+    ownerPhone = normalizePhone(parsed.data.ownerPhone);
+    captainPhone = normalizePhone(parsed.data.captainPhone);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "رقم الهاتف غير صالح." });
+    return;
+  }
+
+  const from = new Date(parsed.data.from);
+  const to = new Date(parsed.data.to);
+  if (from >= to || to.getTime() - from.getTime() > 60 * 60 * 1000) {
+    res.status(400).json({ error: "يجب أن تكون الفترة موجبة ولا تتجاوز ساعة واحدة." });
+    return;
+  }
+
+  const jobs = await prisma.whatsAppJob.findMany({
+    where: {
+      sourceSenderPhone: ownerPhone,
+      createdAt: { gte: from, lte: to },
+      replies: { some: { senderPhone: captainPhone } }
+    },
+    take: 20,
+    orderBy: { createdAt: "asc" },
+    include: {
+      replies: {
+        where: { senderPhone: captainPhone },
+        select: { messageId: true, senderPhone: true, status: true, createdAt: true }
+      }
+    }
+  });
+  const ledger = jobs.length
+    ? await prisma.ledgerEntry.findMany({
+      where: { reference: { in: jobs.map((job) => job.id) } },
+      select: {
+        reference: true,
+        type: true,
+        amountFils: true,
+        description: true,
+        createdAt: true,
+        captain: { select: { phone: true } }
+      },
+      orderBy: { createdAt: "asc" }
+    })
+    : [];
+
+  res.json({
+    count: jobs.length,
+    jobs: jobs.map((job) => ({
+      id: job.id,
+      sourceMessageId: job.sourceMessageId,
+      sourceSenderPhone: job.sourceSenderPhone,
+      priceDinars: job.priceDinars,
+      riderPriceDinars: job.riderPriceDinars,
+      orderPriceDinars: job.orderPriceDinars,
+      commissionFils: job.commissionFils,
+      riderCommissionFils: job.riderCommissionFils,
+      orderCommissionFils: job.orderCommissionFils,
+      status: job.status,
+      createdAt: job.createdAt,
+      replies: job.replies
+    })),
+    ledger: ledger.map((entry) => ({
+      ...entry,
+      amountJod: fromFils(entry.amountFils)
+    }))
+  });
+});
+
 router.get("/admin/commission-audit", requireAuth("admin"), async (_req, res) => {
   const jobs = await prisma.whatsAppJob.findMany({
     select: {
