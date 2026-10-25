@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { calculateCommissionFils, extractPriceAfterLabel } from "../src/pricing";
 
-test("extracts the amount immediately following the Arabic price label", () => {
+test("extracts the amount following supported Arabic price labels", () => {
   assert.equal(extractPriceAfterLabel("سعر 25 راكب"), 25);
   assert.equal(extractPriceAfterLabel("السعر: ٧ أوردر"), 7);
   assert.equal(extractPriceAfterLabel("مطلوب توصيل، سعر: ۱۲"), 12);
+  assert.equal(extractPriceAfterLabel("أجرة 15"), 15);
+  assert.equal(extractPriceAfterLabel("اجاره: ١٠"), 10);
+  assert.equal(extractPriceAfterLabel("التوصيل ٢٠"), 20);
+  assert.equal(extractPriceAfterLabel("حسابه: ٥"), 5);
   assert.equal(extractPriceAfterLabel("راكب 25 د.أ"), null);
   assert.equal(extractPriceAfterLabel("سعر 0"), null);
 });
