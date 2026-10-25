@@ -152,7 +152,8 @@ router.get("/admin/dashboard", requireAuth("admin"), async (_req, res) => {
     settings: {
       groupFloorJod: fromFils(settings.groupFloorFils),
       riderCommissionPerFiveJod: fromFils(settings.riderCommissionPerFiveFils),
-      orderCommissionPerFiveJod: fromFils(settings.orderCommissionPerFiveFils)
+      orderCommissionPerFiveJod: fromFils(settings.orderCommissionPerFiveFils),
+      allowNegativeCommission: settings.allowNegativeCommission
     },
     latestActivity: latest.map((entry) => ({
       ...entry,
@@ -710,7 +711,8 @@ router.put("/admin/settings", requireAuth("admin"), async (req, res) => {
   const parsed = z.object({
     groupFloorJod: z.union([z.string(), z.number()]),
     riderCommissionPerFiveJod: z.union([z.string(), z.number()]),
-    orderCommissionPerFiveJod: z.union([z.string(), z.number()])
+    orderCommissionPerFiveJod: z.union([z.string(), z.number()]),
+    allowNegativeCommission: z.boolean().optional()
   }).safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "أدخل القيم المالية المطلوبة." });
@@ -728,13 +730,17 @@ router.put("/admin/settings", requireAuth("admin"), async (req, res) => {
       update: {
         groupFloorFils: toFils(parsed.data.groupFloorJod),
         riderCommissionPerFiveFils: toFils(parsed.data.riderCommissionPerFiveJod),
-        orderCommissionPerFiveFils: toFils(parsed.data.orderCommissionPerFiveJod)
+        orderCommissionPerFiveFils: toFils(parsed.data.orderCommissionPerFiveJod),
+        ...(parsed.data.allowNegativeCommission === undefined
+          ? {}
+          : { allowNegativeCommission: parsed.data.allowNegativeCommission })
       }
     });
     res.json({
       groupFloorJod: fromFils(updated.groupFloorFils),
       riderCommissionPerFiveJod: fromFils(updated.riderCommissionPerFiveFils),
-      orderCommissionPerFiveJod: fromFils(updated.orderCommissionPerFiveFils)
+      orderCommissionPerFiveJod: fromFils(updated.orderCommissionPerFiveFils),
+      allowNegativeCommission: updated.allowNegativeCommission
     });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "قيمة مالية غير صالحة." });

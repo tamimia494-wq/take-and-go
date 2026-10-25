@@ -26,6 +26,12 @@ type CancelResult =
     }
   | { result: "already_canceled" | "not_charged" | "not_tracked"; amountFils: number };
 
+/** Admin switch: while on, a liked active captain is charged even when it takes their balance below zero. */
+export async function allowsNegativeCommission(db: Prisma.TransactionClient | typeof prisma): Promise<boolean> {
+  const settings = await db.appSettings.findUnique({ where: { id: "default" }, select: { allowNegativeCommission: true } });
+  return settings?.allowNegativeCommission ?? false;
+}
+
 export async function processJobReaction(replyMessageId: string): Promise<ProcessResult> {
   return prisma.$transaction(async (tx) => {
     const reply = await tx.whatsAppReply.findUnique({
@@ -99,7 +105,9 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
 
     // A captain can only take a job when their balance covers its commission; balances never go below zero.
     const debited = await tx.captain.updateMany({
-      where: { id: reply.captain.id, balanceFils: { gte: reply.job.commissionFils } },
+      where: (await allowsNegativeCommission(tx))
+        ? { id: reply.captain.id }
+        : { id: reply.captain.id, balanceFils: { gte: reply.job.commissionFils } },
       data: { balanceFils: { decrement: reply.job.commissionFils } }
     });
     if (debited.count !== 1) {
@@ -241,6 +249,7 @@ async function chargeNextApprovedReply(
     orderBy: { approvedAt: "asc" }
   });
   if (!candidates.length) return null;
+  const allowNegative = force || await allowsNegativeCommission(tx);
   const owner = job.sourceSenderPhone
     ? await tx.captain.findUnique({ where: { phone: job.sourceSenderPhone } })
     : null;
@@ -256,7 +265,9 @@ async function chargeNextApprovedReply(
     const debited = await tx.captain.updateMany({
       where: force
         ? { id: reply.captainId }
-        : { id: reply.captainId, status: "ACTIVE", balanceFils: { gte: job.commissionFils } },
+        : allowNegative
+          ? { id: reply.captainId, status: "ACTIVE" }
+          : { id: reply.captainId, status: "ACTIVE", balanceFils: { gte: job.commissionFils } },
       data: { balanceFils: { decrement: job.commissionFils } }
     });
     if (debited.count !== 1) {

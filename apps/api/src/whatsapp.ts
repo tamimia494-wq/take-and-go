@@ -10,7 +10,7 @@ import {
   normalizePhone,
   phoneFromChatId
 } from "./money";
-import { cancelChargedJob, processJobReaction, removeJobLike } from "./accounting";
+import { allowsNegativeCommission, cancelChargedJob, processJobReaction, removeJobLike } from "./accounting";
 import { calculateCommissionFils, extractPriceAfterLabel } from "./pricing";
 import { isCancellationReaction, isLikeReaction } from "./reactions";
 
@@ -307,6 +307,7 @@ async function recoverJobsAndRepliesFromHistory(
     .sort((left, right) => Number(left.timestamp ?? 0) - Number(right.timestamp ?? 0));
   let jobsRecorded = 0;
   let repliesRecorded = 0;
+  const allowNegative = await allowsNegativeCommission(prisma);
   for (const entry of messages) {
     const messageId = stringValue(entry.idMessage);
     const text = stringValue(entry.textMessage) ??
@@ -336,7 +337,7 @@ async function recoverJobsAndRepliesFromHistory(
     if (job) {
       // Replies from accounts that are not active are deleted live, and admins do not take orders.
       if (captain.status !== "ACTIVE" || isExcludedAdminPhone(senderPhone)) continue;
-      if (await wasBelowMinimumBalance(captain, createdAt)) continue;
+      if (!allowNegative && await wasBelowMinimumBalance(captain, createdAt)) continue;
       const existing = await prisma.whatsAppReply.findUnique({ where: { messageId }, select: { id: true } });
       if (existing) continue;
       await prisma.whatsAppReply.create({
@@ -610,6 +611,20 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     }
     if (captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS) {
       console.warn(`Deleting Green API message ${messageId}: captain balance=${captain.balanceFils} fils is below the minimum.`);
+      if (quotedJob && await allowsNegativeCommission(prisma)) {
+        await prisma.whatsAppReply.upsert({
+          where: { messageId },
+          update: {},
+          create: {
+            messageId,
+            senderPhone,
+            jobId: quotedJob.id,
+            captainId: captain.id,
+            body: text ?? `[${stringValue(data.typeMessage) ?? "message"}]`,
+            status: "REJECTED"
+          }
+        });
+      }
       await deleteRejectedReplyMessage(messageId);
       await sendLowBalanceNotice(senderPhone, captain.fullName);
       return;
