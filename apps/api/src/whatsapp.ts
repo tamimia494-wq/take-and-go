@@ -260,9 +260,16 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   if (isExcludedAdminPhone(senderPhone)) {
     return;
   }
+  const text = messageText(data);
+  if (!text) return;
+  const sourceMessageId = quotedMessageId(data);
+  const isCaptainConfirmation = isConfirmation(text) && Boolean(sourceMessageId);
   {
     const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
     if (!captain || captain.status !== "ACTIVE") {
+      if (isCaptainConfirmation && captain?.status === "PENDING_PROFILE") {
+        throw new Error(`Captain ${senderPhone} must complete profile activation before confirmation ${messageId} can be processed.`);
+      }
       console.warn(
         `Deleting Green API message ${messageId}: sender account is ${!captain ? "unregistered" : captain.status.toLowerCase()}, ` +
         `balance=${captain?.balanceFils ?? "unknown"} fils.`
@@ -278,10 +285,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     }
   }
 
-  const text = messageText(data);
-  if (!text) return;
-  const sourceMessageId = quotedMessageId(data);
-  if (isConfirmation(text) && sourceMessageId) {
+  if (isCaptainConfirmation && sourceMessageId) {
     const job = await prisma.whatsAppJob.findUnique({
       where: { groupId_sourceMessageId: { groupId, sourceMessageId } }
     });
