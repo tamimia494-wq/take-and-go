@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import { JobCategory, Prisma } from "@prisma/client";
+import { JobCategory, Prisma, WebhookEventStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { config } from "./config";
 import { prisma } from "./db";
@@ -76,12 +76,94 @@ export async function receiveGreenApiWebhook(req: Request, res: Response): Promi
     return;
   }
 
+  let event: { id: string; status: WebhookEventStatus };
   try {
-    await processIncomingWebhook(incoming);
-    res.sendStatus(200);
+    event = await prisma.whatsAppWebhookEvent.upsert({
+      where: { eventId: incoming.idMessage! },
+      create: {
+        eventId: incoming.idMessage!,
+        payload: incoming as Prisma.InputJsonValue
+      },
+      update: {},
+      select: { id: true, status: true }
+    });
   } catch (error) {
-    console.error("Green API webhook processing failed:", error);
-    res.status(500).json({ error: "Webhook processing failed." });
+    console.error("Could not persist Green API webhook for processing:", error);
+    res.status(503).json({ error: "Webhook could not be safely stored; please retry." });
+    return;
+  }
+  if (event.status !== WebhookEventStatus.PROCESSED && event.status !== WebhookEventStatus.FAILED) {
+    await processWebhookEvent(event.id);
+  }
+  res.sendStatus(200);
+}
+
+export async function retryPendingGreenApiWebhooks(): Promise<void> {
+  const now = new Date();
+  const pending = await prisma.whatsAppWebhookEvent.findMany({
+    where: { OR: [
+      { status: WebhookEventStatus.PENDING, nextAttemptAt: { lte: now } },
+      { status: WebhookEventStatus.PROCESSING, lockedAt: { lt: new Date(now.getTime() - 2 * 60_000) } }
+    ] },
+    orderBy: { createdAt: "asc" },
+    take: 50,
+    select: { id: true }
+  });
+  for (const event of pending) {
+    await processWebhookEvent(event.id);
+  }
+  await prisma.whatsAppWebhookEvent.deleteMany({
+    where: {
+      status: { in: [WebhookEventStatus.PROCESSED, WebhookEventStatus.FAILED] },
+      updatedAt: { lt: new Date(now.getTime() - 3 * 24 * 60 * 60_000) }
+    }
+  });
+}
+
+async function processWebhookEvent(eventId: string): Promise<void> {
+  const now = new Date();
+  const claim = await prisma.whatsAppWebhookEvent.updateMany({
+    where: {
+      id: eventId,
+      OR: [
+        { status: WebhookEventStatus.PENDING, nextAttemptAt: { lte: now } },
+        { status: WebhookEventStatus.PROCESSING, lockedAt: { lt: new Date(now.getTime() - 2 * 60_000) } }
+      ]
+    },
+    data: {
+      status: WebhookEventStatus.PROCESSING,
+      lockedAt: now,
+      attempts: { increment: 1 }
+    }
+  });
+  if (claim.count !== 1) return;
+
+  const event = await prisma.whatsAppWebhookEvent.findUniqueOrThrow({ where: { id: eventId } });
+  try {
+    await processIncomingWebhook(event.payload as Webhook);
+    await prisma.whatsAppWebhookEvent.update({
+      where: { id: eventId },
+      data: { status: WebhookEventStatus.PROCESSED, lockedAt: null, lastError: null, payload: {} }
+    });
+  } catch (error) {
+    const ageMs = Date.now() - event.createdAt.getTime();
+    const terminal = ageMs >= 60 * 60 * 60 * 1000;
+    const backoffMs = Math.min(15 * 60_000, 30_000 * 2 ** Math.min(event.attempts, 5));
+    await prisma.whatsAppWebhookEvent.update({
+      where: { id: eventId },
+      data: {
+        status: terminal ? WebhookEventStatus.FAILED : WebhookEventStatus.PENDING,
+        lockedAt: null,
+        nextAttemptAt: new Date(Date.now() + backoffMs),
+        lastError: error instanceof Error ? error.message.slice(0, 1000) : String(error).slice(0, 1000),
+        ...(terminal ? { payload: {} } : {})
+      }
+    });
+    if (terminal) {
+      console.error(`Green API webhook ${event.eventId} failed after its retry window:`, error);
+    } else {
+      console.warn(`Green API webhook ${event.eventId} will be retried:`, error);
+    }
   }
 }
 
@@ -112,7 +194,13 @@ export async function replayRecentMessages(minutes = 15): Promise<{ replayed: nu
           ...(text === undefined ? {} : { textMessageData: { textMessage: text } })
         }
       };
-      await processIncomingWebhook(webhook);
+      const event = await prisma.whatsAppWebhookEvent.upsert({
+        where: { eventId: messageId },
+        create: { eventId: messageId, payload: webhook as Prisma.InputJsonValue },
+        update: {},
+        select: { id: true }
+      });
+      await processWebhookEvent(event.id);
       replayed += 1;
     } catch (error) {
       skipped += 1;
@@ -124,7 +212,7 @@ export async function replayRecentMessages(minutes = 15): Promise<{ replayed: nu
 }
 
 function normalizeIncomingWebhook(webhook: Webhook): Webhook | null {
-  if (webhook.typeWebhook === "incomingMessageReceived") return webhook;
+  if (webhook.typeWebhook === "incomingMessageReceived") return webhook.idMessage ? webhook : null;
   if (webhook.type !== "incoming" || webhook.isDeleted || !webhook.idMessage || !webhook.chatId) return null;
   return {
     typeWebhook: "incomingMessageReceived",
@@ -167,8 +255,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   const senderId = webhook.senderData?.sender ?? webhook.senderData?.chatId ?? "";
   const senderPhone = phoneFromChatId(senderId) ?? (senderId ? await resolveGroupSenderPhone(senderId) : null);
   if (!senderPhone) {
-    console.warn(`Green API message ${messageId} was not checked: sender ID could not be mapped to a phone number.`);
-    return;
+    throw new Error(`Sender ID for Green API message ${messageId} could not be mapped to a phone number yet.`);
   }
   if (isExcludedAdminPhone(senderPhone)) {
     return;
@@ -198,7 +285,8 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     const job = await prisma.whatsAppJob.findUnique({
       where: { groupId_sourceMessageId: { groupId, sourceMessageId } }
     });
-    if (!job || job.status !== "PENDING") return;
+    if (!job) throw new Error(`Source job ${sourceMessageId} for confirmation ${messageId} is not available yet.`);
+    if (job.status !== "PENDING") return;
 
     if (!senderPhone) return;
     const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
@@ -297,6 +385,11 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     stringValue(reactionData.targetMessageId) ??
     stringValue(objectValue(data.quotedMessage)?.stanzaId) ??
     stringValue(objectValue(data.quotedMessage)?.idMessage);
+  const recognizedReaction = normalizedReaction === "👍" || normalizedReaction === "👍🏻" ||
+    isCancellationReaction(normalizedReaction);
+  if (recognizedReaction && (!targetMessageId || !actor)) {
+    throw new Error(`Reaction ${webhook.idMessage ?? "unknown"} is missing its target message or actor.`);
+  }
   if (!targetMessageId || !actor) return;
 
   if (normalizedReaction === "👍" || normalizedReaction === "👍🏻") {
@@ -305,8 +398,7 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
       include: { job: { select: { id: true, sourceMessageId: true, sourceSenderPhone: true } } }
     });
     if (!reply) {
-      console.warn(`Green API 👍 reaction ${webhook.idMessage ?? "unknown"} targets an untracked message ${targetMessageId}.`);
-      return;
+      throw new Error(`Target reply ${targetMessageId} for 👍 reaction ${webhook.idMessage ?? "unknown"} is not available yet.`);
     }
     let sourceSenderPhone = reply.job.sourceSenderPhone;
     if (!sourceSenderPhone) {
@@ -323,8 +415,7 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
       }
     }
     if (!sourceSenderPhone) {
-      console.warn(`Green API 👍 reaction ${webhook.idMessage ?? "unknown"} skipped: job owner could not be resolved.`);
-      return;
+      throw new Error(`Owner phone for job ${reply.job.id} could not be resolved yet.`);
     }
     if (actor !== sourceSenderPhone) {
       console.warn(`Green API 👍 reaction ${webhook.idMessage ?? "unknown"} ignored: it was not sent by the job owner.`);
@@ -377,10 +468,9 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
       if (matchingReplies.length === 1) {
         [reply] = matchingReplies;
       } else {
-        console.warn(
-          `Green API X reaction ${webhook.idMessage ?? "unknown"} could not resolve one charged reply for target ${targetMessageId}.`
+        throw new Error(
+          `Target ${targetMessageId} for X reaction ${webhook.idMessage ?? "unknown"} is not available yet.`
         );
-        return;
       }
     }
     const isOwnerOrReplyingCaptain = [reply.senderPhone, reply.job.sourceSenderPhone]

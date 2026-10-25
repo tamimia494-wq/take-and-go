@@ -6,7 +6,7 @@ import { config } from "./config";
 import { prisma } from "./db";
 import { chargeWeeklyFloor, chargeWeeklyFloorIfDue } from "./accounting";
 import { router } from "./routes";
-import { receiveGreenApiWebhook, replayRecentMessages } from "./whatsapp";
+import { receiveGreenApiWebhook, replayRecentMessages, retryPendingGreenApiWebhooks } from "./whatsapp";
 
 const app = express();
 const allowedOrigins = [config.captainAppUrl, config.adminAppUrl];
@@ -33,6 +33,12 @@ cron.schedule("59 23 * * 4", () => {
     console.error("Weekly group-floor deduction failed:", error);
   });
 }, { timezone: config.timezone });
+
+cron.schedule("* * * * *", () => {
+  void retryPendingGreenApiWebhooks().catch((error: unknown) => {
+    console.error("Pending Green API webhook retry failed:", error);
+  });
+});
 
 void chargeWeeklyFloorIfDue().catch((error: unknown) => {
   console.error("Weekly group-floor catch-up failed:", error);

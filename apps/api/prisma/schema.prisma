@@ -50,6 +50,13 @@ enum ReplyStatus {
   CANCELED
 }
 
+enum WebhookEventStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
 model Captain {
   id             String         @id @default(cuid())
   phone          String         @unique
@@ -127,6 +134,21 @@ model WhatsAppReply {
   createdAt      DateTime     @default(now())
   job            WhatsAppJob  @relation(fields: [jobId], references: [id])
   captain        Captain?     @relation(fields: [captainId], references: [id])
+}
+
+model WhatsAppWebhookEvent {
+  id             String             @id @default(cuid())
+  eventId        String             @unique
+  payload        Json
+  status         WebhookEventStatus @default(PENDING)
+  attempts       Int                @default(0)
+  nextAttemptAt  DateTime           @default(now())
+  lockedAt       DateTime?
+  lastError      String?
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([status, nextAttemptAt, createdAt])
 }
 
 model PaymentMethod {
