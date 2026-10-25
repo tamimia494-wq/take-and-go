@@ -50,10 +50,10 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
         priceDinars: reply.job.priceDinars
       };
     }
-    if (!reply.captain) {
+    if (!reply.captain || reply.captain.status !== "ACTIVE") {
       await tx.whatsAppReply.update({
         where: { id: reply.id },
-        data: { status: ReplyStatus.REJECTED }
+        data: { status: ReplyStatus.REJECTED, approvedAt: null, approvedByPhone: null, likeRemovedAt: new Date() }
       });
       return {
         result: "unregistered",
@@ -120,7 +120,9 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
         data: {
           status: reply.status === ReplyStatus.CANCELED ? ReplyStatus.CANCELED : ReplyStatus.REJECTED,
           approvedAt: null,
-          approvedByPhone: null
+          approvedByPhone: null,
+          // Stops the history backfill from bringing this like back after a later top-up.
+          likeRemovedAt: new Date()
         }
       });
       return {
@@ -226,13 +228,15 @@ export type ApprovedReplyCharge = { jobId: string; replyId: string; captainId: s
 type SkippedApproval = { jobId: string; replyId: string; reason: string };
 
 /**
- * Charges the earliest reply on a pending job that the owner approved with 👍 and whose captain can cover the
- * commission. A liked captain without enough balance loses the like, and the job moves on to the next one.
+ * Charges the earliest reply on a pending job that the owner approved with 👍 and whose active captain can cover
+ * the commission. A liked captain who cannot loses the like, and the job moves on to the next one. The one-time
+ * backlog charge passes `force` to take likes that were never charged regardless of balance or account status.
  */
 async function chargeNextApprovedReply(
   tx: Prisma.TransactionClient,
   jobId: string,
-  skipped: SkippedApproval[]
+  skipped: SkippedApproval[],
+  force = false
 ): Promise<ApprovedReplyCharge | null> {
   const job = await tx.whatsAppJob.findUniqueOrThrow({ where: { id: jobId } });
   if (job.status !== JobStatus.PENDING) return null;
@@ -258,7 +262,9 @@ async function chargeNextApprovedReply(
       continue;
     }
     const debited = await tx.captain.updateMany({
-      where: { id: reply.captainId, balanceFils: { gte: job.commissionFils } },
+      where: force
+        ? { id: reply.captainId }
+        : { id: reply.captainId, status: "ACTIVE", balanceFils: { gte: job.commissionFils } },
       data: { balanceFils: { decrement: job.commissionFils } }
     });
     if (debited.count !== 1) {
@@ -267,10 +273,12 @@ async function chargeNextApprovedReply(
         data: {
           status: reply.status === ReplyStatus.CANCELED ? ReplyStatus.CANCELED : ReplyStatus.REJECTED,
           approvedAt: null,
-          approvedByPhone: null
+          approvedByPhone: null,
+          // Stops the history backfill from bringing this like back after a later top-up.
+          likeRemovedAt: new Date()
         }
       });
-      skipped.push({ jobId, replyId: reply.id, reason: "رصيد الكابتن أقل من عمولة الطلب." });
+      skipped.push({ jobId, replyId: reply.id, reason: "حساب الكابتن غير مفعل أو رصيده أقل من عمولة الطلب." });
       continue;
     }
     const captain = await tx.captain.findUniqueOrThrow({ where: { id: reply.captainId } });
@@ -281,7 +289,7 @@ async function chargeNextApprovedReply(
 }
 
 /** Charges, for every pending job, the reply the owner approved with 👍 whose commission was never taken. */
-export async function chargeApprovedUnchargedReplies(tx: Prisma.TransactionClient): Promise<{
+export async function chargeApprovedUnchargedReplies(tx: Prisma.TransactionClient, force = false): Promise<{
   charged: ApprovedReplyCharge[];
   skipped: SkippedApproval[];
 }> {
@@ -297,7 +305,7 @@ export async function chargeApprovedUnchargedReplies(tx: Prisma.TransactionClien
   const charged: ApprovedReplyCharge[] = [];
   const skipped: SkippedApproval[] = [];
   for (const { jobId } of jobs) {
-    const result = await chargeNextApprovedReply(tx, jobId, skipped);
+    const result = await chargeNextApprovedReply(tx, jobId, skipped, force);
     if (result) charged.push(result);
   }
   return { charged, skipped };

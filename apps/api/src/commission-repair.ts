@@ -4,6 +4,8 @@ import { auditCommissionLedger } from "./commission-audit";
 import { prisma } from "./db";
 import { backfillReplyApprovalsFromHistory } from "./whatsapp";
 
+const LIKE_BACKLOG_RUN_ID = "2026-10-25-charge-uncharged-likes";
+
 export async function runCommissionAudit(db: Prisma.TransactionClient | typeof prisma) {
   const jobs = await db.whatsAppJob.findMany({
     select: {
@@ -56,12 +58,16 @@ export async function repairCommissions(historyCount = 300) {
   let history: Awaited<ReturnType<typeof backfillReplyApprovalsFromHistory>> | null = null;
   let historyError: string | null = null;
   try {
-    history = await backfillReplyApprovalsFromHistory(historyCount);
+    const backlogPending = !(await prisma.maintenanceRun.findUnique({ where: { id: LIKE_BACKLOG_RUN_ID } }));
+    history = await backfillReplyApprovalsFromHistory(backlogPending ? Math.max(historyCount, 1000) : historyCount);
   } catch (error) {
     historyError = error instanceof Error ? error.message : String(error);
   }
   const repaired = await prisma.$transaction(async (tx) => {
-    const likes = await chargeApprovedUnchargedReplies(tx);
+    // Likes collected before balances were enforced are charged once, even below zero; afterwards the rules apply.
+    const backlogDone = await tx.maintenanceRun.findUnique({ where: { id: LIKE_BACKLOG_RUN_ID } });
+    const likes = await chargeApprovedUnchargedReplies(tx, !backlogDone);
+    if (!backlogDone) await tx.maintenanceRun.create({ data: { id: LIKE_BACKLOG_RUN_ID } });
     const audit = await runCommissionAudit(tx);
     const runAt = Date.now();
     let entriesCreated = 0;

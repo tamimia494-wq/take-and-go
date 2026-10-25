@@ -181,3 +181,8 @@ model WeeklyFloorCharge {
   weekKey     String   @unique
   completedAt DateTime @default(now())
 }
+
+model MaintenanceRun {
+  id          String   @id
+  completedAt DateTime @default(now())
+}
