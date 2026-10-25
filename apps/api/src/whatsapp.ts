@@ -313,7 +313,7 @@ async function recoverJobsAndRepliesFromHistory(
       stringValue(objectValue(entry.textMessageData)?.textMessage) ??
       stringValue(objectValue(entry.extendedTextMessageData)?.text);
     const senderId = stringValue(entry.senderId) ?? "";
-    if (!messageId || !text || !senderId) continue;
+    if (!messageId || !senderId) continue;
     const senderPhone = phoneFromChatId(senderId) ?? await resolveGroupSenderPhone(senderId);
     if (!senderPhone) continue;
     const captain = await prisma.captain.findUnique({ where: { phone: senderPhone }, select: { id: true, status: true } });
@@ -323,21 +323,29 @@ async function recoverJobsAndRepliesFromHistory(
       stringValue(objectValue(entry.extendedTextMessage)?.stanzaId);
     const createdAt = new Date(Number(entry.timestamp) * 1000);
 
-    if (isConfirmation(text) && sourceMessageId) {
-      const job = await prisma.whatsAppJob.findUnique({
+    const job = sourceMessageId
+      ? await prisma.whatsAppJob.findUnique({
         where: { groupId_sourceMessageId: { groupId, sourceMessageId } },
         select: { id: true }
-      });
-      if (!job) continue;
+      })
+      : null;
+    if (job) {
       const existing = await prisma.whatsAppReply.findUnique({ where: { messageId }, select: { id: true } });
       if (existing) continue;
       await prisma.whatsAppReply.create({
-        data: { messageId, senderPhone, jobId: job.id, captainId: captain.id, body: text, createdAt }
+        data: {
+          messageId,
+          senderPhone,
+          jobId: job.id,
+          captainId: captain.id,
+          body: text ?? `[${stringValue(entry.typeMessage) ?? "message"}]`,
+          createdAt
+        }
       });
       repliesRecorded += 1;
       continue;
     }
-    if (captain.status !== "ACTIVE" && !isExcludedAdminPhone(senderPhone)) continue;
+    if (!text || (captain.status !== "ACTIVE" && !isExcludedAdminPhone(senderPhone))) continue;
     if (await recordJobFromMessage(groupId, messageId, senderPhone, text, createdAt)) jobsRecorded += 1;
   }
   return { jobsRecorded, repliesRecorded };
@@ -444,9 +452,16 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     throw new Error(`Sender ID for Green API message ${messageId} could not be mapped to a phone number yet.`);
   }
   const text = messageText(data);
-  if (!text) return;
   const sourceMessageId = quotedMessageId(data);
-  const isCaptainConfirmation = isConfirmation(text) && Boolean(sourceMessageId);
+  // Any reply to an order counts, whatever it says; the owner's 👍 on it is what charges the commission.
+  const quotedJob = sourceMessageId
+    ? await prisma.whatsAppJob.findUnique({ where: { groupId_sourceMessageId: { groupId, sourceMessageId } } })
+    : null;
+  if (!text && !quotedJob) return;
+  if (sourceMessageId && !quotedJob && text && isConfirmation(text)) {
+    throw new Error(`Source job ${sourceMessageId} for confirmation ${messageId} is not available yet.`);
+  }
+  const isCaptainConfirmation = Boolean(quotedJob);
   // Admin numbers are never deleted or balance-checked, but an admin who also has a captain account still posts
   // orders that earn them the commission.
   const excludedAdmin = isExcludedAdminPhone(senderPhone);
@@ -476,14 +491,9 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     }
   }
 
-  if (isCaptainConfirmation && sourceMessageId) {
-    const job = await prisma.whatsAppJob.findUnique({
-      where: { groupId_sourceMessageId: { groupId, sourceMessageId } }
-    });
-    if (!job) throw new Error(`Source job ${sourceMessageId} for confirmation ${messageId} is not available yet.`);
-    if (job.status !== "PENDING") return;
-
-    if (!senderPhone) return;
+  if (quotedJob) {
+    // Replies to a job that is already taken are kept too, so the job can move to them if the owner's like moves.
+    const job = quotedJob;
     const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
     await prisma.whatsAppReply.upsert({
       where: { messageId },
@@ -493,7 +503,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
         senderPhone,
         jobId: job.id,
         captainId: captain?.id,
-        body: text
+        body: text ?? `[${stringValue(data.typeMessage) ?? "message"}]`
       }
     });
     const rejection = !captain || captain.status !== "ACTIVE"
@@ -514,7 +524,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     return;
   }
 
-  await recordJobFromMessage(chatId, messageId, senderPhone, text);
+  if (text) await recordJobFromMessage(chatId, messageId, senderPhone, text);
 }
 
 async function handleReaction(webhook: Webhook, data: Record<string, unknown>): Promise<void> {
