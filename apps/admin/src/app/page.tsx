@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowDownLeft, ArrowUpLeft, BadgeCheck, CircleDollarSign, KeyRound, LogOut, RefreshCw, Settings2, ShieldCheck, Trash2, UserRoundPlus, Users, Wallet } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
@@ -12,6 +12,12 @@ type Activity = { id: string; description: string; type: string; amountJod: numb
 type PaymentMethod = { id: string; label: string; details: string };
 type TopUpRequest = { id: string; captainName: string; captainPhone: string; amountJod: number; hasReceipt: boolean; status: string; createdAt: string };
 type Overview = { captainCount: number; activeCaptainCount: number; totalBalanceJod: number; settings: Settings; latestActivity: Activity[] };
+type CommissionAudit = {
+  checkedJobs: number;
+  consistentJobs: number;
+  issueCount: number;
+  issues: Array<{ jobId: string; status: string; reasons: string[] }>;
+};
 
 async function api<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -41,6 +47,8 @@ export default function AdminHome() {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [topUps, setTopUps] = useState<TopUpRequest[]>([]);
   const [receiptPreview, setReceiptPreview] = useState<{ id: string; url: string } | null>(null);
+  const [commissionAudit, setCommissionAudit] = useState<CommissionAudit | null>(null);
+  const transferRequest = useRef<{ fingerprint: string; requestId: string } | null>(null);
 
   const refresh = useCallback(async (authToken: string) => {
     const [home, list, methods, topUpList] = await Promise.all([
@@ -214,6 +222,67 @@ export default function AdminHome() {
       await refresh(token);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر تنفيذ العملية.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function transferCommission(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const transferDetails = {
+      consumerPhone: String(form.get("consumerPhone") ?? ""),
+      productPhone: String(form.get("productPhone") ?? ""),
+      amount: String(form.get("amount") ?? "")
+    };
+    const fingerprint = JSON.stringify(transferDetails);
+    if (transferRequest.current?.fingerprint !== fingerprint) {
+      transferRequest.current = { fingerprint, requestId: crypto.randomUUID() };
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api<{
+        amountJod: number;
+        consumer: { phone: string; balanceJod: number };
+        product: { phone: string; balanceJod: number };
+      }>("/admin/commission-transfer", token, {
+        method: "POST",
+        body: JSON.stringify({
+          consumerPhone: form.get("consumerPhone"),
+          productPhone: form.get("productPhone"),
+          amount: form.get("amount"),
+          requestId: transferRequest.current.requestId
+        })
+      });
+      setNotice(
+        `تم تحويل عمولة ${money(result.amountJod)} د.أ من المستهلك ${result.consumer.phone} إلى المنتج ${result.product.phone}. ` +
+        `الرصيد الجديد: المستهلك ${money(result.consumer.balanceJod)} د.أ، المنتج ${money(result.product.balanceJod)} د.أ.`
+      );
+      transferRequest.current = null;
+      formElement.reset();
+      await refresh(token);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تحويل العمولة.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runCommissionAudit() {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api<CommissionAudit>("/admin/commission-audit", token);
+      setCommissionAudit(result);
+      setNotice(result.issueCount
+        ? `انتهى فحص ${result.checkedJobs} طلباً، ووجد ${result.issueCount} حالة تحتاج مراجعة. لم يتم تعديل أي رصيد.`
+        : `انتهى فحص ${result.checkedJobs} طلباً؛ الحركات متطابقة ولا توجد فروقات.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر فحص العمولات.");
     } finally {
       setBusy(false);
     }
@@ -415,6 +484,39 @@ export default function AdminHome() {
             <button className="button ghost full" disabled={busy} onClick={() => void diagnose()}><BadgeCheck size={17} /> فحص اتصال Green API</button>
             <button className="button primary full" disabled={busy} onClick={() => void importCaptains()}><UserRoundPlus size={17} /> {busy ? "جارٍ الاستيراد..." : "مزامنة أعضاء المجموعة"}</button>
             <p className="hint">الحسابات الجديدة تبدأ بكلمة مرور مؤقتة <bdi>123456</bdi> ورصيد صفر، وتحتاج إدخال الاسم عند أول دخول.</p>
+          </article>
+        </section>
+        <section className="admin-grid commission-tools">
+          <article className="panel">
+            <div className="panel-heading"><span className="panel-icon"><CircleDollarSign size={19} /></span><div><h2>تحويل عمولة من مستهلك إلى منتج</h2><p>يُخصم المبلغ من حساب المستهلك ويُضاف للمنتج كعملية واحدة مسجلة.</p></div></div>
+            <form className="commission-transfer-form" onSubmit={transferCommission}>
+              <label>رقم المستهلك<input name="consumerPhone" type="tel" inputMode="tel" dir="ltr" placeholder="رقم حساب المستهلك" required /></label>
+              <label>رقم المنتج<input name="productPhone" type="tel" inputMode="tel" dir="ltr" placeholder="رقم حساب المنتج" required /></label>
+              <label>قيمة العمولة بالدينار<input name="amount" type="number" min="0.001" step="0.001" placeholder="0.000" required /></label>
+              <button className="button primary" disabled={busy}><CircleDollarSign size={16} /> تنفيذ التحويل</button>
+            </form>
+            <p className="hint">يشترط وجود الحسابين وتوفر رصيد كافٍ للمستهلك. تُسجل حركتا الخصم والإضافة في سجل الحسابين.</p>
+          </article>
+          <article className="panel commission-audit-panel">
+            <div className="panel-heading"><span className="panel-icon"><BadgeCheck size={19} /></span><div><h2>تدقيق دفتر العمولات</h2><p>مطابقة خصم الكابتن وإضافة صاحب الطلب وعكس الإلغاء، دون تغيير الأرصدة.</p></div></div>
+            <button className="button ghost full" disabled={busy} onClick={() => void runCommissionAudit()}>
+              <RefreshCw size={16} /> {busy ? "جارٍ الفحص..." : "فحص جميع العمولات"}
+            </button>
+            {commissionAudit && (
+              <div className="commission-audit-result" role="status">
+                <strong>{commissionAudit.consistentJobs} من {commissionAudit.checkedJobs} طلباً متطابقة</strong>
+                {commissionAudit.issueCount > 0 ? (
+                  <div className="commission-audit-issues">
+                    {commissionAudit.issues.map((issue, index) => (
+                      <article key={`${issue.jobId}-${index}`}>
+                        <bdi>#{issue.jobId}</bdi> · {issue.status}
+                        <ul>{issue.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+                      </article>
+                    ))}
+                  </div>
+                ) : <span>لا توجد فروقات في دفتر العمولات.</span>}
+              </div>
+            )}
           </article>
         </section>
         <section className="panel captains-panel">

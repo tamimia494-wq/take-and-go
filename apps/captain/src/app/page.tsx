@@ -58,6 +58,7 @@ export default function CaptainHome() {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [topUpOpen, setTopUpOpen] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [notice, setNotice] = useState("");
   const [captainName, setCaptainName] = useState<string>("");
 
@@ -199,6 +200,33 @@ export default function CaptainHome() {
     }
   }
 
+  async function changePassword(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const newPassword = String(form.get("newPassword") ?? "");
+    if (newPassword !== String(form.get("confirmPassword") ?? "")) {
+      setError("كلمتا المرور الجديدتان غير متطابقتين.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await api("/captain/password", token, {
+        method: "POST",
+        body: JSON.stringify({ currentPassword: form.get("currentPassword"), newPassword })
+      });
+      setNotice("تم تغيير كلمة المرور بنجاح.");
+      formElement.reset();
+      setShowPassword(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تغيير كلمة المرور.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function logout() {
     window.localStorage.removeItem("take-go-captain-token");
     setToken("");
@@ -270,10 +298,30 @@ export default function CaptainHome() {
       <section className="dashboard-content">
         <div className="page-heading">
           <div><p className="eyebrow">ملخص حساب الكابتن</p><h1>{captainName || "كابتن"}</h1></div>
-          <span className="today-date">{new Intl.DateTimeFormat("ar-JO", { dateStyle: "full" }).format(new Date())} <span>🇯🇴</span></span>
+          <div className="captain-heading-actions">
+            <span className="today-date">{new Intl.DateTimeFormat("ar-JO", { dateStyle: "full" }).format(new Date())} <span>🇯🇴</span></span>
+            <button
+              type="button"
+              className="password-toggle"
+              aria-expanded={showPassword}
+              aria-controls="captain-password-form"
+              onClick={() => { setShowPassword((open) => !open); setError(""); setNotice(""); }}
+            >
+              <Lock size={15} /> {showPassword ? "إغلاق" : "تغيير كلمة السر"}
+            </button>
+          </div>
          </div>
         {error && <p className="error-message" role="alert">{error}</p>}
         {notice && <p className="success-message" role="status">{notice}</p>}
+        {showPassword && (
+          <form id="captain-password-form" className="password-card" onSubmit={changePassword}>
+            <strong><ShieldCheck size={17} /> تغيير كلمة المرور</strong>
+            <input name="currentPassword" type="password" autoComplete="current-password" placeholder="كلمة المرور الحالية" required />
+            <input name="newPassword" type="password" autoComplete="new-password" placeholder="كلمة المرور الجديدة (6 أحرف على الأقل)" minLength={6} required />
+            <input name="confirmPassword" type="password" autoComplete="new-password" placeholder="تأكيد كلمة المرور الجديدة" minLength={6} required />
+            <button className="primary-button" disabled={busy}>{busy ? "جارٍ التغيير..." : "حفظ كلمة المرور"} <ShieldCheck size={17} /></button>
+          </form>
+        )}
         <section className="balance-card">
           <div className="balance-copy"><span className="balance-icon"><Wallet size={22} /></span><span>رصيدك الحالي</span></div>
           <p className="balance-value">{money(dashboard?.balanceJod ?? 0)} <small>د.أ</small></p>

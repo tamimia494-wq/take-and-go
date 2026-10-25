@@ -76,6 +76,17 @@ input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #126df21b; }
 .metric-card strong { font-size: 19px; }
 .metric-card small { color: #a0aabc; font-size: 9px; }
 .admin-grid { display: grid; grid-template-columns: 1.2fr .8fr; gap: 16px; margin-bottom: 17px; }
+.commission-tools { grid-template-columns: 1fr 1fr; }
+.commission-transfer-form { display: grid; gap: 0 12px; }
+.commission-transfer-form label { margin: 4px 0 10px; }
+.commission-transfer-form input { display: block; width: 100%; margin-top: 7px; direction: ltr; text-align: left; }
+.commission-transfer-form .button { justify-self: start; min-width: 150px; }
+.commission-audit-panel .button.full { width: 100%; min-height: 42px; }
+.commission-audit-result { display: grid; gap: 8px; margin-top: 12px; color: #65738a; font-size: 10px; line-height: 1.8; }
+.commission-audit-result > strong { color: #1d2735; }
+.commission-audit-issues { max-height: 260px; overflow-y: auto; display: grid; gap: 8px; }
+.commission-audit-issues article { padding: 9px 10px; border: 1px solid #f2d7b2; border-radius: 9px; background: #fffaf0; overflow-wrap: anywhere; }
+.commission-audit-issues ul { margin: 4px 0 0; padding-right: 18px; }
 .panel { background: #fff; border: 1px solid var(--line); border-radius: 17px; padding: 20px; }
 .panel-heading { display: flex; align-items: center; gap: 11px; margin-bottom: 19px; }
 .panel-heading h2 { margin: 0; font-size: 14px; }
@@ -276,6 +287,8 @@ td:first-child strong { font-weight: 600; }
   .metric-card strong { grid-column: 2; grid-row: 2; font-size: 12px; overflow-wrap: anywhere; }
   .metric-card small { grid-column: 2; font-size: 8px; }
   .admin-grid { gap: 11px; margin-bottom: 11px; }
+  .commission-tools { grid-template-columns: 1fr; }
+  .commission-transfer-form .button { width: 100%; min-height: 44px; }
   .panel { min-width: 0; padding: 14px 12px; border-radius: 13px; }
   .panel-heading { align-items: flex-start; gap: 8px; margin-bottom: 14px; }
   .panel-heading h2 { font-size: 13px; }

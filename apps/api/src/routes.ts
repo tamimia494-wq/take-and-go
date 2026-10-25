@@ -1,8 +1,9 @@
 import bcrypt from "bcryptjs";
-import { LedgerType } from "@prisma/client";
+import { LedgerType, Prisma } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
 import { adminLogin, captainLogin, requireAuth } from "./auth";
+import { auditCommissionLedger } from "./commission-audit";
 import { prisma } from "./db";
 import { fromFils, normalizePhone, toFils } from "./money";
 import { importGroupCaptains } from "./whatsapp";
@@ -81,6 +82,25 @@ router.post("/captain/activate", requireAuth("captain"), async (req, res) => {
   });
 });
 
+router.post("/captain/password", requireAuth("captain"), async (req, res) => {
+  const parsed = z.object({
+    currentPassword: z.string().min(1).max(128),
+    newPassword: z.string().min(6).max(128)
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل." });
+    return;
+  }
+  const captain = await prisma.captain.findUnique({ where: { id: req.user!.id } });
+  if (!captain || !(await bcrypt.compare(parsed.data.currentPassword, captain.passwordHash))) {
+    res.status(401).json({ error: "كلمة المرور الحالية غير صحيحة." });
+    return;
+  }
+  const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
+  await prisma.captain.update({ where: { id: captain.id }, data: { passwordHash } });
+  res.json({ ok: true });
+});
+
 router.get("/captain/dashboard", requireAuth("captain"), async (req, res) => {
   const captainId = req.user!.id;
   const [captain, jobs, ledger] = await Promise.all([
@@ -149,32 +169,31 @@ router.get("/admin/whatsapp-jobs/:id", requireAuth("admin"), async (req, res) =>
     return;
   }
 
-  const [job, ledger] = await Promise.all([
-    prisma.whatsAppJob.findFirst({
-      where: { OR: [{ id: jobId }, { sourceMessageId: jobId }] },
-      include: {
-        replies: {
-          select: { messageId: true, senderPhone: true, status: true, createdAt: true }
-        }
+  const job = await prisma.whatsAppJob.findFirst({
+    where: { OR: [{ id: jobId }, { sourceMessageId: jobId }] },
+    include: {
+      replies: {
+        select: { messageId: true, senderPhone: true, status: true, createdAt: true }
       }
-    }),
-    prisma.ledgerEntry.findMany({
-      where: { reference: jobId },
-      select: {
-        type: true,
-        amountFils: true,
-        description: true,
-        createdAt: true,
-        captain: { select: { fullName: true, phone: true } }
-      },
-      orderBy: { createdAt: "asc" }
-    })
-  ]);
+    }
+  });
 
   if (!job) {
     res.status(404).json({ error: "الطلب غير موجود." });
     return;
   }
+
+  const ledger = await prisma.ledgerEntry.findMany({
+    where: { reference: job.id },
+    select: {
+      type: true,
+      amountFils: true,
+      description: true,
+      createdAt: true,
+      captain: { select: { fullName: true, phone: true } }
+    },
+    orderBy: { createdAt: "asc" }
+  });
 
   res.json({
     job: {
@@ -196,6 +215,48 @@ router.get("/admin/whatsapp-jobs/:id", requireAuth("admin"), async (req, res) =>
       ...entry,
       amountJod: fromFils(entry.amountFils)
     }))
+  });
+});
+
+router.get("/admin/commission-audit", requireAuth("admin"), async (_req, res) => {
+  const jobs = await prisma.whatsAppJob.findMany({
+    select: {
+      id: true,
+      status: true,
+      sourceSenderPhone: true,
+      commissionFils: true,
+      riderCommissionFils: true,
+      orderCommissionFils: true,
+      replies: { select: { captainId: true, status: true } }
+    }
+  });
+  const ownerPhones = [...new Set(jobs
+    .map((job) => job.sourceSenderPhone)
+    .filter((phone): phone is string => phone !== null))];
+  const [captains, entries] = await Promise.all([
+    prisma.captain.findMany({
+      where: { phone: { in: ownerPhones } },
+      select: { id: true, phone: true }
+    }),
+    prisma.ledgerEntry.findMany({
+      where: {
+        reference: { not: null },
+        type: { in: [LedgerType.ORDER_COMMISSION, LedgerType.RIDER_COMMISSION, LedgerType.ADJUSTMENT] }
+      },
+      select: { reference: true, captainId: true, type: true, amountFils: true }
+    })
+  ]);
+  const issues = auditCommissionLedger(
+    jobs,
+    captains,
+    entries.filter((entry) => !entry.reference?.startsWith("commission-transfer:"))
+  );
+  const inconsistentJobIds = new Set(issues.filter((issue) => issue.status !== "UNKNOWN").map((issue) => issue.jobId));
+  res.json({
+    checkedJobs: jobs.length,
+    consistentJobs: jobs.length - inconsistentJobIds.size,
+    issueCount: issues.length,
+    issues
   });
 });
 
@@ -393,6 +454,142 @@ router.post("/admin/captains/adjust", requireAuth("admin"), async (req, res) => 
     });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "تعذر تنفيذ العملية." });
+  }
+});
+
+router.post("/admin/commission-transfer", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({
+    consumerPhone: z.string().min(8).max(24),
+    productPhone: z.string().min(8).max(24),
+    amount: z.union([z.string(), z.number()]),
+    requestId: z.string().uuid()
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "أدخل رقم المستهلك ورقم المنتج وقيمة العمولة." });
+    return;
+  }
+
+  let consumerPhone: string;
+  let productPhone: string;
+  let amountFils: number;
+  try {
+    consumerPhone = normalizePhone(parsed.data.consumerPhone);
+    productPhone = normalizePhone(parsed.data.productPhone);
+    amountFils = toFils(parsed.data.amount);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "البيانات المدخلة غير صالحة." });
+    return;
+  }
+  if (amountFils <= 0) {
+    res.status(400).json({ error: "يجب أن تكون قيمة العمولة أكبر من صفر." });
+    return;
+  }
+  if (consumerPhone === productPhone) {
+    res.status(400).json({ error: "يجب أن يكون رقم المستهلك مختلفاً عن رقم المنتج." });
+    return;
+  }
+
+  const reference = `commission-transfer:${parsed.data.requestId}`;
+  const consumerKey = `${reference}:consumer`;
+  const productKey = `${reference}:product`;
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const previousEntries = await tx.ledgerEntry.findMany({
+        where: { idempotencyKey: { in: [consumerKey, productKey] } }
+      });
+      if (previousEntries.length) {
+        const previousDebit = previousEntries.find((entry) => entry.idempotencyKey === consumerKey);
+        const previousCredit = previousEntries.find((entry) => entry.idempotencyKey === productKey);
+        if (
+          previousEntries.length !== 2 ||
+          !previousDebit ||
+          !previousCredit ||
+          previousDebit.type !== LedgerType.ADJUSTMENT ||
+          previousCredit.type !== LedgerType.ADJUSTMENT ||
+          previousDebit.reference !== reference ||
+          previousCredit.reference !== reference ||
+          previousDebit?.amountFils !== -amountFils ||
+          previousCredit?.amountFils !== amountFils
+        ) {
+          return { error: "معرّف العملية مستخدم لتحويل مختلف أو غير مكتمل.", status: 409 as const };
+        }
+        const [consumer, product] = await Promise.all([
+          tx.captain.findUnique({ where: { id: previousDebit.captainId } }),
+          tx.captain.findUnique({ where: { id: previousCredit.captainId } })
+        ]);
+        if (!consumer || !product || consumer.phone !== consumerPhone || product.phone !== productPhone) {
+          return { error: "معرّف العملية مستخدم لتحويل مختلف أو غير مكتمل.", status: 409 as const };
+        }
+        return {
+          replayed: true,
+          consumer: { phone: consumer.phone, balanceJod: fromFils(consumer.balanceFils) },
+          product: { phone: product.phone, balanceJod: fromFils(product.balanceFils) }
+        };
+      }
+
+      const accounts = await tx.captain.findMany({
+        where: { phone: { in: [consumerPhone, productPhone] } }
+      });
+      const consumer = accounts.find((account) => account.phone === consumerPhone);
+      const product = accounts.find((account) => account.phone === productPhone);
+      if (!consumer || !product) {
+        return { error: "لم يتم العثور على حساب المستهلك أو المنتج.", status: 404 as const };
+      }
+
+      const debit = await tx.captain.updateMany({
+        where: { id: consumer.id, balanceFils: { gte: amountFils } },
+        data: { balanceFils: { decrement: amountFils } }
+      });
+      if (debit.count !== 1) {
+        return {
+          error: `رصيد المستهلك غير كافٍ. الرصيد الحالي: ${fromFils(consumer.balanceFils)} د.أ.`,
+          status: 400 as const
+        };
+      }
+      const updatedConsumer = await tx.captain.findUniqueOrThrow({ where: { id: consumer.id } });
+      const updatedProduct = await tx.captain.update({
+        where: { id: product.id },
+        data: { balanceFils: { increment: amountFils } }
+      });
+      await tx.ledgerEntry.createMany({
+        data: [
+          {
+            captainId: consumer.id,
+            type: LedgerType.ADJUSTMENT,
+            amountFils: -amountFils,
+            balanceAfterFils: updatedConsumer.balanceFils,
+            description: `عمولة محولة إلى المنتج ${product.phone}`,
+            reference,
+            idempotencyKey: consumerKey
+          },
+          {
+            captainId: product.id,
+            type: LedgerType.ADJUSTMENT,
+            amountFils,
+            balanceAfterFils: updatedProduct.balanceFils,
+            description: `عمولة مستلمة من المستهلك ${consumer.phone}`,
+            reference,
+            idempotencyKey: productKey
+          }
+        ]
+      });
+      return {
+        replayed: false,
+        consumer: { phone: consumer.phone, balanceJod: fromFils(updatedConsumer.balanceFils) },
+        product: { phone: product.phone, balanceJod: fromFils(updatedProduct.balanceFils) }
+      };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    if ("error" in result) {
+      res.status(result.status ?? 400).json({ error: result.error });
+      return;
+    }
+    res.json({ amountJod: fromFils(amountFils), ...result });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+      res.status(409).json({ error: "تغير الرصيد أثناء تنفيذ العملية. حدّث البيانات ثم أعد المحاولة." });
+      return;
+    }
+    throw error;
   }
 });
 
