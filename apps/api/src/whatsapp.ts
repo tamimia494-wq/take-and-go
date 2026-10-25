@@ -175,16 +175,18 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   }
   {
     const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
-    if (!captain || captain.status !== "ACTIVE" || captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS) {
+    if (!captain || captain.status !== "ACTIVE") {
       console.warn(
         `Deleting Green API message ${messageId}: sender account is ${!captain ? "unregistered" : captain.status.toLowerCase()}, ` +
-        `balance=${captain ? captain.balanceFils : "unknown"} fils.`
+        `balance=${captain?.balanceFils ?? "unknown"} fils.`
       );
       await deleteRejectedReplyMessage(messageId);
-      const reason = !captain || captain.status !== "ACTIVE"
-        ? "رقمك غير مسجل أو حسابك غير مفعل"
-        : "رصيدك أقل من الحد الأدنى 0.75 د.أ";
-      await sendGroupMessage(`⚠️ تم حذف رسالتك. ${reason}. اشحن رصيدك أو تواصل مع الإدارة.`);
+      await sendGroupMessage("⚠️ تم حذف رسالتك. رقمك غير مسجل أو حسابك غير مفعل. تواصل مع الإدارة.");
+      return;
+    }
+    if (captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS) {
+      console.warn(`Deleting Green API message ${messageId}: captain balance=${captain.balanceFils} fils is below the minimum.`);
+      await deleteRejectedReplyMessage(messageId);
       return;
     }
   }
@@ -221,7 +223,9 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
       });
       if (rejectedReply.count === 1) {
         await deleteRejectedReplyMessage(messageId);
-        await sendRejectedReplyNotice(rejection, job.priceDinars, job.commissionFils);
+        if (rejection === "unregistered") {
+          await sendRejectedReplyNotice(job.priceDinars, job.commissionFils);
+        }
       }
     }
     return;
@@ -346,7 +350,9 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
 
     if (result.result === "insufficient" || result.result === "unregistered") {
       await deleteRejectedReplyMessage(targetMessageId);
-      await sendRejectedReplyNotice(result.result, result.priceDinars ?? 0, result.amountFils);
+      if (result.result === "unregistered") {
+        await sendRejectedReplyNotice(result.priceDinars ?? 0, result.amountFils);
+      }
     }
     return;
   }
@@ -451,15 +457,11 @@ function isExcludedAdminPhone(phone: string): boolean {
 }
 
 async function sendRejectedReplyNotice(
-  rejection: "insufficient" | "unregistered",
   priceDinars: number,
   commissionFils: number
 ): Promise<void> {
-  const reason = rejection === "insufficient"
-    ? "رصيدك غير كافٍ. الحد الأدنى المطلوب 0.75 د.أ"
-    : "رقمك غير مسجل أو حسابك غير مفعل";
   await sendGroupMessage(
-    `⚠️ ${reason}. قيمة الطلب ${priceDinars} د.أ وعمولته ${formatJod(commissionFils)} د.أ. يرجى التواصل مع الإدارة وشحن الرصيد لتتمكن من أخذ الطلبات.`
+    `⚠️ رقمك غير مسجل أو حسابك غير مفعل. قيمة الطلب ${priceDinars} د.أ وعمولته ${formatJod(commissionFils)} د.أ. يرجى التواصل مع الإدارة وشحن الرصيد لتتمكن من أخذ الطلبات.`
   );
 }
 
