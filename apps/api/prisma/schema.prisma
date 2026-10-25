@@ -131,6 +131,9 @@ model WhatsAppReply {
   captainId      String?
   body           String
   status         ReplyStatus   @default(PENDING)
+  approvedAt     DateTime?
+  approvedByPhone String?
+  likeRemovedAt  DateTime?
   createdAt      DateTime     @default(now())
   job            WhatsAppJob  @relation(fields: [jobId], references: [id])
   captain        Captain?     @relation(fields: [captainId], references: [id])

@@ -3,7 +3,7 @@ import { LedgerType, Prisma } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
 import { adminLogin, captainLogin, requireAuth } from "./auth";
-import { auditCommissionLedger } from "./commission-audit";
+import { repairCommissions, runCommissionAudit } from "./commission-repair";
 import { prisma } from "./db";
 import { fromFils, normalizePhone, toFils } from "./money";
 import { importGroupCaptains } from "./whatsapp";
@@ -301,46 +301,11 @@ router.get("/admin/whatsapp-jobs-search", requireAuth("admin"), async (req, res)
 });
 
 router.get("/admin/commission-audit", requireAuth("admin"), async (_req, res) => {
-  const jobs = await prisma.whatsAppJob.findMany({
-    select: {
-      id: true,
-      status: true,
-      sourceSenderPhone: true,
-      commissionFils: true,
-      riderCommissionFils: true,
-      orderCommissionFils: true,
-      replies: { select: { captainId: true, status: true } }
-    }
-  });
-  const ownerPhones = [...new Set(jobs
-    .map((job) => job.sourceSenderPhone)
-    .filter((phone): phone is string => phone !== null))];
-  const jobIds = jobs.map((job) => job.id);
-  const [captains, entries] = await Promise.all([
-    prisma.captain.findMany({
-      where: { phone: { in: ownerPhones } },
-      select: { id: true, phone: true }
-    }),
-    prisma.ledgerEntry.findMany({
-      where: {
-        reference: { in: jobIds },
-        type: { in: [LedgerType.ORDER_COMMISSION, LedgerType.RIDER_COMMISSION, LedgerType.ADJUSTMENT] }
-      },
-      select: { reference: true, captainId: true, type: true, amountFils: true }
-    })
-  ]);
-  const issues = auditCommissionLedger(
-    jobs,
-    captains,
-    entries.filter((entry) => !entry.reference?.startsWith("commission-transfer:"))
-  );
-  const inconsistentJobIds = new Set(issues.filter((issue) => issue.status !== "UNKNOWN").map((issue) => issue.jobId));
-  res.json({
-    checkedJobs: jobs.length,
-    consistentJobs: jobs.length - inconsistentJobIds.size,
-    issueCount: issues.length,
-    issues
-  });
+  res.json(await runCommissionAudit(prisma));
+});
+
+router.post("/admin/commission-audit/repair", requireAuth("admin"), async (_req, res) => {
+  res.json(await repairCommissions(1000));
 });
 
 router.get("/admin/captains", requireAuth("admin"), async (_req, res) => {

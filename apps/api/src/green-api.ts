@@ -116,6 +116,11 @@ export async function getGroupMessageSenderPhone(messageId: string): Promise<str
   return phoneFromChatId(message.senderId) ?? resolveGroupSenderPhone(message.senderId);
 }
 
+export async function fetchGroupHistory(count: number): Promise<Array<Record<string, unknown>>> {
+  const { groupId } = requireGreenApiConfig();
+  return greenApiRequest<Array<Record<string, unknown>>>("getChatHistory", { chatId: groupId, count });
+}
+
 export async function fetchRecentIncomingMessages(minutes = 15): Promise<unknown[]> {
   const { groupId } = requireGreenApiConfig();
   const count = Math.min(100, Math.max(minutes, 20));

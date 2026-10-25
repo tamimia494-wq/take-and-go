@@ -5,6 +5,7 @@ import cron from "node-cron";
 import { config } from "./config";
 import { prisma } from "./db";
 import { chargeWeeklyFloor, chargeWeeklyFloorIfDue } from "./accounting";
+import { repairCommissions } from "./commission-repair";
 import { router } from "./routes";
 import { receiveGreenApiWebhook, replayRecentMessages, retryPendingGreenApiWebhooks } from "./whatsapp";
 
@@ -33,6 +34,26 @@ cron.schedule("59 23 * * 4", () => {
     console.error("Weekly group-floor deduction failed:", error);
   });
 }, { timezone: config.timezone });
+
+// Charges owner-liked replies that were never charged and completes missing commission entries.
+let commissionRepairRunning = false;
+cron.schedule("*/5 * * * *", () => {
+  if (commissionRepairRunning) return;
+  commissionRepairRunning = true;
+  void repairCommissions()
+    .then((result) => {
+      if (result.likedCharged.length || result.entriesCreated) {
+        console.info(`Commission repair: charged ${result.likedCharged.length} liked replies, added ${result.entriesCreated} missing entries.`);
+      }
+      if (result.historyError) console.warn("Commission repair could not read group history:", result.historyError);
+    })
+    .catch((error: unknown) => {
+      console.error("Scheduled commission repair failed:", error);
+    })
+    .finally(() => {
+      commissionRepairRunning = false;
+    });
+});
 
 cron.schedule("* * * * *", () => {
   void retryPendingGreenApiWebhooks().catch((error: unknown) => {

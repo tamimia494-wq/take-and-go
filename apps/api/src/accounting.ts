@@ -33,7 +33,8 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
       include: { job: true, captain: true }
     });
     if (!reply) return { result: "not_tracked", amountFils: 0 };
-    if (reply.status !== ReplyStatus.PENDING) {
+    // A reply is rejected when another reply on the job was charged first; it becomes chargeable again once that like is removed.
+    if (reply.status !== ReplyStatus.PENDING && reply.status !== ReplyStatus.REJECTED) {
       return {
         result: "already_processed",
         amountFils: reply.job.commissionFils,
@@ -66,7 +67,7 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
     }
 
     const replyClaim = await tx.whatsAppReply.updateMany({
-      where: { id: reply.id, status: ReplyStatus.PENDING },
+      where: { id: reply.id, status: { in: [ReplyStatus.PENDING, ReplyStatus.REJECTED] } },
       data: { status: ReplyStatus.PROCESSING }
     });
     if (replyClaim.count !== 1) {
@@ -95,81 +96,14 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
       };
     }
 
-    const debited = await tx.captain.updateMany({
-      where: {
-        id: reply.captain.id,
-        balanceFils: { gte: Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, reply.job.commissionFils) }
-      },
+    // The owner already handed the job over with 👍, so the commission is taken even if it leaves the captain below zero.
+    await tx.captain.update({
+      where: { id: reply.captain.id },
       data: { balanceFils: { decrement: reply.job.commissionFils } }
     });
-    if (debited.count !== 1) {
-      await tx.whatsAppJob.update({
-        where: { id: reply.jobId },
-        data: { status: JobStatus.PENDING }
-      });
-      await tx.whatsAppReply.update({
-        where: { id: reply.id },
-        data: { status: ReplyStatus.REJECTED }
-      });
-      return {
-        result: "insufficient",
-        amountFils: reply.job.commissionFils,
-        category: reply.job.category,
-        priceDinars: reply.job.priceDinars
-      };
-    }
 
     const captain = await tx.captain.findUniqueOrThrow({ where: { id: reply.captain.id } });
-    const creditedOwner = await tx.captain.update({
-      where: { id: owner.id },
-      data: { balanceFils: { increment: reply.job.commissionFils } }
-    });
-    const commissionEntries = [
-      {
-        type: LedgerType.RIDER_COMMISSION,
-        amountFils: reply.job.riderCommissionFils,
-        idempotencyKey: `job:${reply.job.id}:rider`
-      },
-      {
-        type: LedgerType.ORDER_COMMISSION,
-        amountFils: reply.job.orderCommissionFils,
-        idempotencyKey: `job:${reply.job.id}:order`
-      }
-    ].filter((entry) => entry.amountFils > 0);
-    await tx.ledgerEntry.createMany({
-      data: commissionEntries.map((entry) => ({
-        captainId: captain.id,
-        type: entry.type,
-        amountFils: -entry.amountFils,
-        balanceAfterFils: captain.balanceFils,
-        description: describeJobPrice(reply.job.riderPriceDinars, reply.job.orderPriceDinars),
-        reference: reply.job.id,
-        idempotencyKey: entry.idempotencyKey
-      }))
-    });
-    await tx.ledgerEntry.createMany({
-      data: commissionEntries.map((entry) => ({
-        captainId: owner.id,
-        type: entry.type,
-        amountFils: entry.amountFils,
-        balanceAfterFils: creditedOwner.balanceFils,
-        description: `عمولة مستلمة: ${describeJobPrice(reply.job.riderPriceDinars, reply.job.orderPriceDinars)}`,
-        reference: reply.job.id,
-        idempotencyKey: `job:${reply.job.id}:${entry.type.toLowerCase()}:owner`
-      }))
-    });
-    await tx.whatsAppJob.update({
-      where: { id: reply.jobId },
-      data: { status: JobStatus.CHARGED }
-    });
-    await tx.whatsAppReply.update({
-      where: { id: reply.id },
-      data: { status: ReplyStatus.CHARGED }
-    });
-    await tx.whatsAppReply.updateMany({
-      where: { jobId: reply.jobId, id: { not: reply.id }, status: ReplyStatus.PENDING },
-      data: { status: ReplyStatus.REJECTED }
-    });
+    const creditedOwner = await recordJobCharge(tx, reply.job, captain, owner.id, reply.id);
     return {
       result: "charged",
       captainName: reply.captain.fullName ?? reply.captain.phone,
@@ -180,6 +114,251 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
       riderPriceDinars: reply.job.riderPriceDinars,
       orderPriceDinars: reply.job.orderPriceDinars
     };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+type ChargeableJob = {
+  id: string;
+  commissionFils: number;
+  riderCommissionFils: number;
+  orderCommissionFils: number;
+  riderPriceDinars: number;
+  orderPriceDinars: number;
+};
+
+/** Credits the owner, writes both sides of the commission and marks the job and reply charged. The captain must already be debited. */
+async function recordJobCharge(
+  tx: Prisma.TransactionClient,
+  job: ChargeableJob,
+  captain: { id: string; balanceFils: number },
+  ownerId: string,
+  replyId: string
+): Promise<{ id: string; balanceFils: number }> {
+  const creditedOwner = await tx.captain.update({
+    where: { id: ownerId },
+    data: { balanceFils: { increment: job.commissionFils } }
+  });
+  // The first charge keeps the original per-job keys; a job handed to the next liker is keyed by that reply.
+  const chargedBefore = await tx.ledgerEntry.count({
+    where: { reference: job.id, type: { in: [LedgerType.RIDER_COMMISSION, LedgerType.ORDER_COMMISSION] } }
+  });
+  const keyPrefix = chargedBefore ? `job:${job.id}:reply:${replyId}` : `job:${job.id}`;
+  const commissionEntries = [
+    {
+      type: LedgerType.RIDER_COMMISSION,
+      amountFils: job.riderCommissionFils,
+      idempotencyKey: `${keyPrefix}:rider`
+    },
+    {
+      type: LedgerType.ORDER_COMMISSION,
+      amountFils: job.orderCommissionFils,
+      idempotencyKey: `${keyPrefix}:order`
+    }
+  ].filter((entry) => entry.amountFils > 0);
+  await tx.ledgerEntry.createMany({
+    data: commissionEntries.map((entry) => ({
+      captainId: captain.id,
+      type: entry.type,
+      amountFils: -entry.amountFils,
+      balanceAfterFils: captain.balanceFils,
+      description: describeJobPrice(job.riderPriceDinars, job.orderPriceDinars),
+      reference: job.id,
+      idempotencyKey: entry.idempotencyKey
+    }))
+  });
+  await tx.ledgerEntry.createMany({
+    data: commissionEntries.map((entry) => ({
+      captainId: ownerId,
+      type: entry.type,
+      amountFils: entry.amountFils,
+      balanceAfterFils: creditedOwner.balanceFils,
+      description: `عمولة مستلمة: ${describeJobPrice(job.riderPriceDinars, job.orderPriceDinars)}`,
+      reference: job.id,
+      idempotencyKey: `${keyPrefix}:${entry.type.toLowerCase()}:owner`
+    }))
+  });
+  await tx.whatsAppJob.update({
+    where: { id: job.id },
+    data: { status: JobStatus.CHARGED }
+  });
+  await tx.whatsAppReply.update({
+    where: { id: replyId },
+    data: { status: ReplyStatus.CHARGED }
+  });
+  await tx.whatsAppReply.updateMany({
+    where: { jobId: job.id, id: { not: replyId }, status: ReplyStatus.PENDING },
+    data: { status: ReplyStatus.REJECTED }
+  });
+  return creditedOwner;
+}
+
+export type ApprovedReplyCharge = { jobId: string; replyId: string; captainId: string; amountFils: number };
+
+type SkippedApproval = { jobId: string; replyId: string; reason: string };
+
+/**
+ * Charges the earliest reply on a pending job that the owner approved with 👍. The debit is taken even when it
+ * leaves the captain below zero, because the owner already handed them the job.
+ */
+async function chargeNextApprovedReply(
+  tx: Prisma.TransactionClient,
+  jobId: string,
+  skipped: SkippedApproval[]
+): Promise<ApprovedReplyCharge | null> {
+  const job = await tx.whatsAppJob.findUniqueOrThrow({ where: { id: jobId } });
+  if (job.status !== JobStatus.PENDING) return null;
+  const candidates = await tx.whatsAppReply.findMany({
+    where: { jobId, approvedAt: { not: null }, status: { in: [ReplyStatus.PENDING, ReplyStatus.REJECTED] } },
+    orderBy: { approvedAt: "asc" }
+  });
+  if (!candidates.length) return null;
+  const owner = job.sourceSenderPhone
+    ? await tx.captain.findUnique({ where: { phone: job.sourceSenderPhone } })
+    : null;
+  if (!owner) {
+    skipped.push({ jobId, replyId: candidates[0]!.id, reason: "صاحب الطلب ليس له حساب." });
+    return null;
+  }
+  for (const reply of candidates) {
+    if (!reply.captainId) {
+      skipped.push({ jobId, replyId: reply.id, reason: "صاحب الرد ليس له حساب كابتن." });
+      continue;
+    }
+    const captain = await tx.captain.update({
+      where: { id: reply.captainId },
+      data: { balanceFils: { decrement: job.commissionFils } }
+    });
+    await recordJobCharge(tx, job, captain, owner.id, reply.id);
+    return { jobId, replyId: reply.id, captainId: captain.id, amountFils: job.commissionFils };
+  }
+  return null;
+}
+
+/** Charges, for every pending job, the reply the owner approved with 👍 whose commission was never taken. */
+export async function chargeApprovedUnchargedReplies(tx: Prisma.TransactionClient): Promise<{
+  charged: ApprovedReplyCharge[];
+  skipped: SkippedApproval[];
+}> {
+  const jobs = await tx.whatsAppReply.findMany({
+    where: {
+      approvedAt: { not: null },
+      status: { in: [ReplyStatus.PENDING, ReplyStatus.REJECTED] },
+      job: { status: JobStatus.PENDING }
+    },
+    distinct: ["jobId"],
+    select: { jobId: true }
+  });
+  const charged: ApprovedReplyCharge[] = [];
+  const skipped: SkippedApproval[] = [];
+  for (const { jobId } of jobs) {
+    const result = await chargeNextApprovedReply(tx, jobId, skipped);
+    if (result) charged.push(result);
+  }
+  return { charged, skipped };
+}
+
+/** Refunds the charged captain and takes the commission back from the owner, writing both sides to the ledger. */
+async function reverseJobCharge(
+  tx: Prisma.TransactionClient,
+  job: ChargeableJob,
+  captainId: string,
+  ownerId: string,
+  keyPrefix: string,
+  captainDescription: string,
+  ownerDescription: string
+): Promise<{ captainId: string; captainBalanceFils: number; ownerId: string; ownerBalanceFils: number }> {
+  const captain = await tx.captain.update({
+    where: { id: captainId },
+    data: { balanceFils: { increment: job.commissionFils } }
+  });
+  await tx.ledgerEntry.create({
+    data: {
+      captainId: captain.id,
+      type: LedgerType.ADJUSTMENT,
+      amountFils: job.commissionFils,
+      balanceAfterFils: captain.balanceFils,
+      description: captainDescription,
+      reference: job.id,
+      idempotencyKey: keyPrefix
+    }
+  });
+  const ownerAfterReversal = await tx.captain.update({
+    where: { id: ownerId },
+    data: { balanceFils: { decrement: job.commissionFils } }
+  });
+  const ownerReversalEntries = [
+    { type: LedgerType.RIDER_COMMISSION, amountFils: job.riderCommissionFils },
+    { type: LedgerType.ORDER_COMMISSION, amountFils: job.orderCommissionFils }
+  ].filter((entry) => entry.amountFils > 0);
+  await tx.ledgerEntry.createMany({
+    data: ownerReversalEntries.map((entry) => ({
+      captainId: ownerId,
+      type: LedgerType.ADJUSTMENT,
+      amountFils: -entry.amountFils,
+      balanceAfterFils: ownerAfterReversal.balanceFils,
+      description: ownerDescription,
+      reference: job.id,
+      idempotencyKey: `${keyPrefix}:owner:${entry.type.toLowerCase()}`
+    }))
+  });
+  return {
+    captainId,
+    captainBalanceFils: captain.balanceFils,
+    ownerId,
+    ownerBalanceFils: ownerAfterReversal.balanceFils
+  };
+}
+
+type LikeRemovalResult =
+  | { result: "transferred"; fromCaptainId: string; toCaptainId: string; amountFils: number }
+  | { result: "released"; fromCaptainId: string; amountFils: number }
+  | { result: "approval_cleared" | "not_tracked" };
+
+/**
+ * The owner took their 👍 off a reply. A charged reply loses the job and is refunded, and the job moves to the next
+ * reply the owner liked; a reply still waiting in that queue just loses its place.
+ */
+export async function removeJobLike(replyMessageId: string): Promise<LikeRemovalResult> {
+  return prisma.$transaction(async (tx) => {
+    const reply = await tx.whatsAppReply.findUnique({
+      where: { messageId: replyMessageId },
+      include: { job: true }
+    });
+    if (!reply) return { result: "not_tracked" };
+    await tx.whatsAppReply.update({
+      where: { id: reply.id },
+      data: { approvedAt: null, approvedByPhone: null }
+    });
+    if (reply.status !== ReplyStatus.CHARGED || reply.job.status !== JobStatus.CHARGED || !reply.captainId) {
+      return { result: "approval_cleared" };
+    }
+    const owner = reply.job.sourceSenderPhone
+      ? await tx.captain.findUnique({ where: { phone: reply.job.sourceSenderPhone } })
+      : null;
+    if (!owner) {
+      throw new Error(`Charged WhatsApp job ${reply.jobId} has no registered owner account to move the commission.`);
+    }
+    await reverseJobCharge(
+      tx,
+      reply.job,
+      reply.captainId,
+      owner.id,
+      `job-unlike:${reply.id}`,
+      `إرجاع ${describeJobPrice(reply.job.riderPriceDinars, reply.job.orderPriceDinars)} بعد إزالة اللايك`,
+      "عكس العمولة بعد إزالة اللايك"
+    );
+    await tx.whatsAppReply.update({
+      where: { id: reply.id },
+      data: { status: ReplyStatus.CANCELED }
+    });
+    await tx.whatsAppJob.update({
+      where: { id: reply.jobId },
+      data: { status: JobStatus.PENDING }
+    });
+    const next = await chargeNextApprovedReply(tx, reply.jobId, []);
+    return next
+      ? { result: "transferred", fromCaptainId: reply.captainId, toCaptainId: next.captainId, amountFils: next.amountFils }
+      : { result: "released", fromCaptainId: reply.captainId, amountFils: reply.job.commissionFils };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
@@ -226,44 +405,19 @@ export async function cancelChargedJob(replyMessageId: string, actorPhone: strin
       data: { status: ReplyStatus.REJECTED }
     });
 
-    const captain = await tx.captain.update({
-      where: { id: reply.captain.id },
-      data: { balanceFils: { increment: reply.job.commissionFils } }
-    });
-    await tx.ledgerEntry.create({
-      data: {
-        captainId: captain.id,
-        type: LedgerType.ADJUSTMENT,
-        amountFils: reply.job.commissionFils,
-        balanceAfterFils: captain.balanceFils,
-        description: `عكس ${describeJobPrice(reply.job.riderPriceDinars, reply.job.orderPriceDinars)} بواسطة ${actorPhone}`,
-        reference: reply.job.id,
-        idempotencyKey: `job-cancel:${reply.job.id}`
-      }
-    });
-    const ownerAfterReversal = await tx.captain.update({
-      where: { id: owner.id },
-      data: { balanceFils: { decrement: reply.job.commissionFils } }
-    });
-    const ownerReversalEntries = [
-      { type: LedgerType.RIDER_COMMISSION, amountFils: reply.job.riderCommissionFils },
-      { type: LedgerType.ORDER_COMMISSION, amountFils: reply.job.orderCommissionFils }
-    ].filter((entry) => entry.amountFils > 0);
-    await tx.ledgerEntry.createMany({
-      data: ownerReversalEntries.map((entry) => ({
-        captainId: owner.id,
-        type: LedgerType.ADJUSTMENT,
-        amountFils: -entry.amountFils,
-        balanceAfterFils: ownerAfterReversal.balanceFils,
-        description: `عكس العمولة بسبب إلغاء الطلب`,
-        reference: reply.job.id,
-        idempotencyKey: `job-cancel:${reply.job.id}:owner:${entry.type.toLowerCase()}`
-      }))
-    });
+    const reversal = await reverseJobCharge(
+      tx,
+      reply.job,
+      reply.captain.id,
+      owner.id,
+      `job-cancel:${reply.job.id}`,
+      `عكس ${describeJobPrice(reply.job.riderPriceDinars, reply.job.orderPriceDinars)} بواسطة ${actorPhone}`,
+      "عكس العمولة بسبب إلغاء الطلب"
+    );
     return {
       result: "canceled",
       amountFils: reply.job.commissionFils,
-      balanceFils: captain.id === ownerAfterReversal.id ? ownerAfterReversal.balanceFils : captain.balanceFils,
+      balanceFils: reversal.captainId === reversal.ownerId ? reversal.ownerBalanceFils : reversal.captainBalanceFils,
       priceDinars: reply.job.priceDinars,
       riderPriceDinars: reply.job.riderPriceDinars,
       orderPriceDinars: reply.job.orderPriceDinars

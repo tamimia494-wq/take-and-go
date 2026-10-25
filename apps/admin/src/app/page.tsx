@@ -16,7 +16,17 @@ type CommissionAudit = {
   checkedJobs: number;
   consistentJobs: number;
   issueCount: number;
-  issues: Array<{ jobId: string; status: string; reasons: string[] }>;
+  repairableJobs: number;
+  issues: Array<{ jobId: string; status: string; reasons: string[]; repairable: boolean }>;
+};
+type CommissionRepair = {
+  likedCharged: Array<{ jobId: string }>;
+  likedSkipped: Array<{ jobId: string; reason: string }>;
+  repairedJobs: number;
+  entriesCreated: number;
+  history: { reactionsFound: number; approvalsRecorded: number } | null;
+  historyError: string | null;
+  audit: CommissionAudit;
 };
 
 async function api<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
@@ -292,6 +302,31 @@ export default function AdminHome() {
     }
   }
 
+  async function repairCommissionAudit() {
+    if (!window.confirm("سيتم خصم العمولة من كل كابتن أخذ لايك من صاحب الطلب ولم تُخصم منه، وإضافتها لصاحب الطلب، وإكمال أي حركة خصم أو إضافة ناقصة. متابعة؟")) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api<CommissionRepair>("/admin/commission-audit/repair", token, {
+        method: "POST",
+        signal: AbortSignal.timeout(60000)
+      });
+      setCommissionAudit(result.audit);
+      setNotice([
+        `تم خصم ${result.likedCharged.length} طلباً أخذ لايك ولم يُخصم.`,
+        `تم تصحيح ${result.repairedJobs} طلباً بإضافة ${result.entriesCreated} حركة خصم وإضافة.`,
+        result.likedSkipped.length ? `لم يُخصم ${result.likedSkipped.length} لايك: ${[...new Set(result.likedSkipped.map((item) => item.reason))].join(" ")}` : "",
+        result.historyError ? `تعذر قراءة سجل الجروب: ${result.historyError}` : "",
+        `المتبقي للمراجعة اليدوية: ${result.audit.issueCount}.`
+      ].filter(Boolean).join(" "));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تصحيح العمولات.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function toggleStatus(captain: Captain) {
     setBusy(true);
     setError("");
@@ -502,18 +537,21 @@ export default function AdminHome() {
             <p className="hint">يشترط وجود الحسابين وتوفر رصيد كافٍ للمستهلك. تُسجل حركتا الخصم والإضافة في سجل الحسابين.</p>
           </article>
           <article className="panel commission-audit-panel">
-            <div className="panel-heading"><span className="panel-icon"><BadgeCheck size={19} /></span><div><h2>تدقيق دفتر العمولات</h2><p>مطابقة خصم الكابتن وإضافة صاحب الطلب وعكس الإلغاء، دون تغيير الأرصدة.</p></div></div>
+            <div className="panel-heading"><span className="panel-icon"><BadgeCheck size={19} /></span><div><h2>تدقيق دفتر العمولات</h2><p>مطابقة خصم الكابتن وإضافة صاحب الطلب وعكس الإلغاء. يُخصم تلقائياً كل 5 دقائق أي رد عليه لايك ولم تُخصم عمولته.</p></div></div>
             <button className="button ghost full" disabled={busy} onClick={() => void runCommissionAudit()}>
               <RefreshCw size={16} /> {busy ? "جارٍ الفحص..." : "فحص جميع العمولات"}
             </button>
             {commissionAudit && (
               <div className="commission-audit-result" role="status">
                 <strong>{commissionAudit.consistentJobs} من {commissionAudit.checkedJobs} طلباً متطابقة</strong>
+                <button className="button primary full" disabled={busy} onClick={() => void repairCommissionAudit()}>
+                  <CircleDollarSign size={16} /> خصم وإضافة العمولات الناقصة{commissionAudit.repairableJobs > 0 ? ` (${commissionAudit.repairableJobs} طلب)` : ""}
+                </button>
                 {commissionAudit.issueCount > 0 ? (
                   <div className="commission-audit-issues">
                     {commissionAudit.issues.map((issue, index) => (
                       <article key={`${issue.jobId}-${index}`}>
-                        <bdi>#{issue.jobId}</bdi> · {issue.status}
+                        <bdi>#{issue.jobId}</bdi> · {issue.status}{issue.repairable ? " · قابل للتصحيح" : " · مراجعة يدوية"}
                         <ul>{issue.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
                       </article>
                     ))}

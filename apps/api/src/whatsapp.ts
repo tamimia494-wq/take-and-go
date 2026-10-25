@@ -3,14 +3,14 @@ import { JobCategory, Prisma, WebhookEventStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { config } from "./config";
 import { prisma } from "./db";
-import { deleteGroupMessage, fetchRecentIncomingMessages, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, greenApiRequest, resolveGroupSenderPhone, sendGroupMessage } from "./green-api";
+import { deleteGroupMessage, fetchGroupHistory, fetchRecentIncomingMessages, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, greenApiRequest, resolveGroupSenderPhone, sendGroupMessage } from "./green-api";
 import {
   hasSufficientCaptainReplyBalance,
   MINIMUM_CAPTAIN_REPLY_BALANCE_FILS,
   normalizePhone,
   phoneFromChatId
 } from "./money";
-import { cancelChargedJob, processJobReaction } from "./accounting";
+import { cancelChargedJob, processJobReaction, removeJobLike } from "./accounting";
 import { calculateCommissionFils, extractPriceAfterLabel } from "./pricing";
 import { isCancellationReaction } from "./reactions";
 
@@ -223,6 +223,54 @@ export async function replayRecentMessages(minutes = 15): Promise<{ replayed: nu
   }
   console.log(`Chat history replay finished: ${replayed} processed, ${skipped} skipped.`);
   return { replayed, skipped };
+}
+
+/**
+ * Recovers owner 👍 approvals from the group history, for likes that arrived before approvals were stored.
+ * Only the latest reaction of each person on a reply counts, so a removed like or a later ❌ is not an approval.
+ */
+export async function backfillReplyApprovalsFromHistory(count = 300): Promise<{ reactionsFound: number; approvalsRecorded: number }> {
+  const history = await fetchGroupHistory(count);
+  const latestReaction = new Map<string, { actor: string; targetMessageId: string; reaction: string; timestamp: number }>();
+  const reactions = history
+    .filter((entry) => (stringValue(entry.typeMessage) ?? stringValue(entry.type)) === "reactionMessage")
+    .sort((left, right) => Number(left.timestamp ?? 0) - Number(right.timestamp ?? 0));
+  for (const entry of reactions) {
+    const reactionData = objectValue(entry.reactionMessageData) ?? objectValue(entry.reactionMessage) ??
+      objectValue(entry.extendedTextMessageData) ?? objectValue(entry.extendedTextMessage) ?? {};
+    const reaction = (stringValue(reactionData.text) ?? stringValue(reactionData.reaction) ??
+      stringValue(entry.textMessage) ?? "").replace(/\uFE0F/g, "").trim();
+    const targetMessageId = stringValue(reactionData.stanzaId) ?? stringValue(reactionData.idMessage) ??
+      stringValue(reactionData.targetMessageId) ?? stringValue(objectValue(entry.quotedMessage)?.stanzaId) ??
+      stringValue(objectValue(entry.quotedMessage)?.idMessage);
+    const senderId = stringValue(entry.senderId) ?? "";
+    const actor = phoneFromChatId(senderId) ?? (senderId ? await resolveGroupSenderPhone(senderId) : null);
+    if (!targetMessageId || !actor) continue;
+    latestReaction.set(`${actor}|${targetMessageId}`, {
+      actor,
+      targetMessageId,
+      reaction,
+      timestamp: Number(entry.timestamp ?? 0)
+    });
+  }
+
+  let approvalsRecorded = 0;
+  for (const { actor, targetMessageId, reaction, timestamp } of latestReaction.values()) {
+    if (reaction !== "👍" && reaction !== "👍🏻") continue;
+    const reply = await prisma.whatsAppReply.findUnique({
+      where: { messageId: targetMessageId },
+      include: { job: { select: { sourceSenderPhone: true } } }
+    });
+    if (!reply?.job.sourceSenderPhone || !samePhone(reply.job.sourceSenderPhone, actor)) continue;
+    const likedAt = timestamp ? new Date(timestamp * 1000) : new Date();
+    if (reply.likeRemovedAt && reply.likeRemovedAt >= likedAt) continue;
+    const recorded = await prisma.whatsAppReply.updateMany({
+      where: { id: reply.id, approvedAt: null },
+      data: { approvedAt: likedAt, approvedByPhone: actor }
+    });
+    approvalsRecorded += recorded.count;
+  }
+  return { reactionsFound: reactions.length, approvalsRecorded };
 }
 
 function normalizeIncomingWebhook(webhook: Webhook): Webhook | null {
@@ -439,17 +487,15 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
       console.warn(`Green API 👍 reaction ${webhook.idMessage ?? "unknown"} ignored: it was not sent by the job owner.`);
       return;
     }
+    // Keep the owner's approval so an audit can still charge this reply if the charge below does not go through.
+    await prisma.whatsAppReply.updateMany({
+      where: { id: reply.id, approvedAt: null },
+      data: { approvedAt: new Date(), approvedByPhone: actor }
+    });
 
     const result = await processJobReaction(targetMessageId);
     if (result.result === "not_tracked") return;
-    if (result.result === "already_processed") {
-      const storedReply = await prisma.whatsAppReply.findUnique({
-        where: { messageId: targetMessageId },
-        select: { status: true }
-      });
-      if (storedReply?.status === "REJECTED") await deleteRejectedReplyMessage(targetMessageId);
-      return;
-    }
+    if (result.result === "already_processed") return;
     if (result.result === "charged") return;
 
     if (result.result === "owner_unregistered") {
@@ -466,7 +512,24 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     return;
   }
 
-  if (isCancellationReaction(normalizedReaction)) {
+  if (!isCancellationReaction(normalizedReaction)) {
+    const reply = await prisma.whatsAppReply.findUnique({
+      where: { messageId: targetMessageId },
+      include: { job: { select: { sourceSenderPhone: true } } }
+    });
+    if (!reply?.job.sourceSenderPhone || !samePhone(reply.job.sourceSenderPhone, actor)) return;
+    if (!reply.approvedAt && reply.status !== "CHARGED") return;
+    await prisma.whatsAppReply.update({ where: { id: reply.id }, data: { likeRemovedAt: new Date() } });
+    const result = await removeJobLike(targetMessageId);
+    if (result.result === "transferred") {
+      console.info(`WhatsApp job ${reply.jobId} moved from captain ${result.fromCaptainId} to ${result.toCaptainId} after the owner removed 👍.`);
+    } else if (result.result === "released") {
+      console.info(`WhatsApp job ${reply.jobId} was refunded to captain ${result.fromCaptainId}; no other reply has the owner's 👍.`);
+    }
+    return;
+  }
+
+  {
     let reply = await prisma.whatsAppReply.findUnique({
       where: { messageId: targetMessageId },
       include: { job: { select: { id: true, sourceMessageId: true, sourceSenderPhone: true } } }
@@ -503,6 +566,12 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
       console.info(`WhatsApp job ${reply.job.id} commission was reversed after an authorized X reaction.`);
     } else if (result.result === "not_charged") {
       console.warn(`WhatsApp job ${reply.job.id} was not reversed after X: it was not charged.`);
+      if (reply.job.sourceSenderPhone && samePhone(reply.job.sourceSenderPhone, actor)) {
+        await prisma.whatsAppReply.updateMany({
+          where: { id: reply.id },
+          data: { approvedAt: null, approvedByPhone: null }
+        });
+      }
     }
   }
 }
