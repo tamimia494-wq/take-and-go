@@ -336,16 +336,10 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
       if (storedReply?.status === "REJECTED") await deleteRejectedReplyMessage(targetMessageId);
       return;
     }
-    if (result.result === "charged") {
-      await sendGroupMessage(
-        `✅ تم اعتماد الطلب للكابتن ${result.captainName}. تم خصم عمولة ${formatJod(result.amountFils)} د.أ من رصيده وإضافتها إلى رصيد صاحب الطلب. رصيد الكابتن ${result.captainName} الآن ${formatJod(result.balanceFils)} د.أ.`
-      );
-      return;
-    }
+    if (result.result === "charged") return;
 
     if (result.result === "owner_unregistered") {
       console.warn(`WhatsApp job reply ${targetMessageId} was not charged: the job owner has no captain account.`);
-      await sendGroupMessage("تعذر تحديد حساب صاحب الطلب، لذلك لم يتم خصم العمولة أو إضافتها لأي رصيد.");
       return;
     }
 
@@ -365,11 +359,7 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     const isOwner = actor === reply.senderPhone || actor === reply.job.sourceSenderPhone;
     if (!isOwner && !(await isGroupAdministrator(actor))) return;
 
-    const result = await cancelChargedJob(targetMessageId, actor);
-    if (result.result !== "canceled") return;
-    await sendGroupMessage(
-      `❌ تم إلغاء الطلب ${formatJobPrice(result.orderPriceDinars, result.riderPriceDinars)} وإرجاع العمولة ${formatJod(result.amountFils)} د.أ إلى رصيد الكابتن.`
-    );
+    await cancelChargedJob(targetMessageId, actor);
   }
 }
 
@@ -459,11 +449,4 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
 
 function formatJod(fils: number): string {
   return (fils / 1000).toFixed(3).replace(/\.?0+$/, "");
-}
-
-function formatJobPrice(orderPriceDinars: number, riderPriceDinars: number): string {
-  const parts: string[] = [];
-  if (orderPriceDinars > 0) parts.push(`أوردر ${orderPriceDinars} د.أ`);
-  if (riderPriceDinars > 0) parts.push(`راكب ${riderPriceDinars} د.أ`);
-  return `القيمة: ${parts.join(" + ")}`;
 }
