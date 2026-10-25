@@ -17,8 +17,16 @@ export function hasSufficientCaptainReplyBalance(balanceFils: number, commission
   return balanceFils >= Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, commissionFils);
 }
 
+export function normalizeDigits(value: string): string {
+  return value.replace(/[٠-٩۰-۹]/g, (digit) => {
+    const arabicIndex = "٠١٢٣٤٥٦٧٨٩".indexOf(digit);
+    const persianIndex = "۰۱۲۳۴۵۶۷۸۹".indexOf(digit);
+    return String(arabicIndex >= 0 ? arabicIndex : persianIndex);
+  });
+}
+
 export function normalizePhone(value: string): string {
-  let digits = value.replace(/\D/g, "");
+  let digits = normalizeDigits(value).replace(/\D/g, "");
   if (digits.startsWith("00")) digits = digits.slice(2);
   if (digits.startsWith("0")) digits = `962${digits.slice(1)}`;
   if (digits.startsWith("7")) digits = `962${digits}`;

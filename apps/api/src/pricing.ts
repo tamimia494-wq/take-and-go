@@ -1,9 +1,7 @@
+import { normalizeDigits } from "./money";
+
 export function extractPriceAfterLabel(line: string): number | null {
-  const normalized = line.replace(/[٠-٩۰-۹]/g, (digit) => {
-    const arabicIndex = "٠١٢٣٤٥٦٧٨٩".indexOf(digit);
-    const persianIndex = "۰۱۲۳۴۵۶۷۸۹".indexOf(digit);
-    return String(arabicIndex >= 0 ? arabicIndex : persianIndex);
-  });
+  const normalized = normalizeDigits(line);
   const match = /(?:^|[\s:：])(?:السعر|سعر)\s*[:：-]?\s*(\d+)/u.exec(normalized);
   if (!match) return null;
   const amount = Number(match[1]);
