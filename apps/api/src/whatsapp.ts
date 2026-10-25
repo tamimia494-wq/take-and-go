@@ -468,9 +468,26 @@ const sweptMessageIds = new Set<string>();
  * Deletes recent group messages that live processing missed: anything from a number without an active account,
  * and anything sent while the captain's balance was below the minimum.
  */
-export async function sweepUnauthorizedMessages(count = 100): Promise<{ deleted: number }> {
+export async function sweepUnauthorizedMessages(count = 100): Promise<{ deleted: number; unresolvedSenders: number }> {
+  try {
+    const result = await sweepUnauthorizedMessagesOnce(count);
+    lastSweep = { at: new Date().toISOString(), ...result, error: null };
+    return result;
+  } catch (error) {
+    lastSweep = {
+      at: new Date().toISOString(),
+      deleted: 0,
+      unresolvedSenders: 0,
+      error: error instanceof Error ? error.message : String(error)
+    };
+    throw error;
+  }
+}
+
+async function sweepUnauthorizedMessagesOnce(count: number): Promise<{ deleted: number; unresolvedSenders: number }> {
   const groupId = config.greenApiGroupId;
-  if (!groupId) return { deleted: 0 };
+  if (!groupId) return { deleted: 0, unresolvedSenders: 0 };
+  let unresolvedSenders = 0;
   const history = await fetchGroupHistory(count);
   const nowSeconds = Date.now() / 1000;
   let deleted = 0;
@@ -483,7 +500,11 @@ export async function sweepUnauthorizedMessages(count = 100): Promise<{ deleted:
     if (stringValue(entry.typeMessage) === "reactionMessage" || stringValue(entry.typeMessage) === "deletedMessage") continue;
     if (nowSeconds - timestamp > 60 * 60 * 60) continue;
     const senderPhone = phoneFromChatId(senderId) ?? await resolveGroupSenderPhone(senderId);
-    if (!senderPhone || isExcludedAdminPhone(senderPhone)) continue;
+    if (!senderPhone) {
+      unresolvedSenders += 1;
+      continue;
+    }
+    if (isExcludedAdminPhone(senderPhone)) continue;
     const captain = await prisma.captain.findUnique({
       where: { phone: senderPhone },
       select: { id: true, status: true, balanceFils: true }
@@ -507,11 +528,12 @@ export async function sweepUnauthorizedMessages(count = 100): Promise<{ deleted:
       deleted += 1;
     } catch (error) {
       console.warn(`Sweep could not delete message ${messageId}:`, error);
+      rememberDeletionIssue(messageId, error);
     }
     sweptMessageIds.add(messageId);
   }
   if (sweptMessageIds.size > 5000) sweptMessageIds.clear();
-  return { deleted };
+  return { deleted, unresolvedSenders };
 }
 
 function normalizeIncomingWebhook(webhook: Webhook): Webhook | null {
@@ -805,6 +827,27 @@ function quotedMessageId(data: Record<string, unknown>): string | null {
   return candidates.find(Boolean) ?? null;
 }
 
+export type DeletionIssue = { at: string; messageId: string; error: string };
+const recentDeletionIssues: DeletionIssue[] = [];
+let lastSweep: { at: string; deleted: number; unresolvedSenders: number; error: string | null } | null = null;
+
+function rememberDeletionIssue(messageId: string, error: unknown): void {
+  recentDeletionIssues.unshift({
+    at: new Date().toISOString(),
+    messageId,
+    error: error instanceof Error ? error.message : String(error)
+  });
+  recentDeletionIssues.length = Math.min(recentDeletionIssues.length, 20);
+}
+
+export function getDeletionStatus(): { recentDeletionIssues: DeletionIssue[]; lastSweep: typeof lastSweep } {
+  return { recentDeletionIssues, lastSweep };
+}
+
+export function isExcludedPhone(phone: string): boolean {
+  return isExcludedAdminPhone(phone);
+}
+
 async function deleteRejectedReplyMessage(messageId: string): Promise<void> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
@@ -818,6 +861,7 @@ async function deleteRejectedReplyMessage(messageId: string): Promise<void> {
     }
   }
   console.error(`Green API could not delete rejected captain message ${messageId} after 5 attempts:`, lastError);
+  rememberDeletionIssue(messageId, lastError);
   throw new Error("Could not delete rejected captain reply from the WhatsApp group.", { cause: lastError });
 }
 

@@ -5,8 +5,8 @@ import { z } from "zod";
 import { adminLogin, captainLogin, requireAuth } from "./auth";
 import { repairCommissions, runCommissionAudit } from "./commission-repair";
 import { prisma } from "./db";
-import { fromFils, normalizePhone, toFils } from "./money";
-import { importGroupCaptains } from "./whatsapp";
+import { fromFils, MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, normalizePhone, phoneFromChatId, toFils } from "./money";
+import { getDeletionStatus, importGroupCaptains, isExcludedPhone } from "./whatsapp";
 import { greenApiRequest } from "./green-api";
 import { config } from "./config";
 
@@ -359,7 +359,7 @@ router.post("/admin/captains/initial-credit", requireAuth("admin"), async (_req,
   res.json({ creditedAccounts: credited, amountJodPerAccount: 1 });
 });
 
-router.get("/admin/green-api/diagnose", requireAuth("admin"), async (_req, res) => {
+router.get("/admin/green-api/diagnose", requireAuth("admin"), async (req, res) => {
   const configured = Boolean(config.greenApiInstanceId && config.greenApiToken && config.greenApiGroupId);
   const result: Record<string, unknown> = {
     configured,
@@ -379,11 +379,64 @@ router.get("/admin/green-api/diagnose", requireAuth("admin"), async (_req, res) 
     result.instanceError = error instanceof Error ? error.message : String(error);
   }
   try {
-    const data = await greenApiRequest<{ participants?: unknown[] }>("getGroupData", { groupId: config.greenApiGroupId });
+    const data = await greenApiRequest<{
+      participants?: Array<{ id?: string; participantId?: string; phoneNumber?: string; isAdmin?: boolean; isSuperAdmin?: boolean }>;
+    }>("getGroupData", { groupId: config.greenApiGroupId });
     result.groupFound = true;
     result.participantCount = (data.participants ?? []).length;
+    // Deleting other members' messages requires the bot to be a group admin.
+    const botPhone = typeof result.instancePhone === "string" ? phoneFromChatId(result.instancePhone) : null;
+    const bot = botPhone
+      ? (data.participants ?? []).find((participant) =>
+        [participant.phoneNumber, participant.id, participant.participantId].some((id) => id && phoneFromChatId(id) === botPhone))
+      : undefined;
+    result.botInGroup = Boolean(bot);
+    result.botIsAdmin = Boolean(bot && (bot.isAdmin || bot.isSuperAdmin));
   } catch (error) {
     result.groupError = error instanceof Error ? error.message : String(error);
+  }
+  try {
+    const settings = await greenApiRequest<{ webhookUrl?: string; incomingWebhook?: string }>("getSettings");
+    result.webhookUrl = settings.webhookUrl ?? null;
+    result.incomingWebhook = settings.incomingWebhook ?? null;
+  } catch (error) {
+    result.settingsError = error instanceof Error ? error.message : String(error);
+  }
+  result.excludedPhones = [config.adminContactPhone, ...config.excludedAdminPhones]
+    .map((phone) => phoneFromChatId(phone) ?? phone);
+  const [queue, latestErrors] = await Promise.all([
+    prisma.whatsAppWebhookEvent.groupBy({ by: ["status"], _count: { _all: true } }),
+    prisma.whatsAppWebhookEvent.findMany({
+      where: { lastError: { not: null } },
+      orderBy: { updatedAt: "desc" },
+      take: 5,
+      select: { status: true, attempts: true, lastError: true, updatedAt: true }
+    })
+  ]);
+  result.webhookQueue = Object.fromEntries(queue.map((row) => [row.status, row._count._all]));
+  result.latestWebhookErrors = latestErrors;
+  Object.assign(result, getDeletionStatus());
+
+  const phoneQuery = typeof req.query.phone === "string" ? req.query.phone : "";
+  if (phoneQuery) {
+    try {
+      const phone = normalizePhone(phoneQuery);
+      const captain = await prisma.captain.findUnique({
+        where: { phone },
+        select: { status: true, balanceFils: true }
+      });
+      result.phoneCheck = {
+        phone,
+        excluded: isExcludedPhone(phone),
+        hasAccount: Boolean(captain),
+        status: captain?.status ?? null,
+        balanceJod: captain ? fromFils(captain.balanceFils) : null,
+        shouldDelete: !isExcludedPhone(phone) && (!captain || captain.status !== "ACTIVE" ||
+          captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS)
+      };
+    } catch (error) {
+      result.phoneCheck = { error: error instanceof Error ? error.message : String(error) };
+    }
   }
   res.json(result);
 });

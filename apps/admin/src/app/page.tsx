@@ -58,6 +58,7 @@ export default function AdminHome() {
   const [topUps, setTopUps] = useState<TopUpRequest[]>([]);
   const [receiptPreview, setReceiptPreview] = useState<{ id: string; url: string } | null>(null);
   const [commissionAudit, setCommissionAudit] = useState<CommissionAudit | null>(null);
+  const [diagnosePhone, setDiagnosePhone] = useState("");
   const transferRequest = useRef<{ fingerprint: string; requestId: string } | null>(null);
 
   const refresh = useCallback(async (authToken: string) => {
@@ -158,7 +159,10 @@ export default function AdminHome() {
     setError("");
     setNotice("");
     try {
-      const result = await api<Record<string, unknown>>("/admin/green-api/diagnose", token);
+      const result = await api<Record<string, unknown>>(
+        `/admin/green-api/diagnose${diagnosePhone.trim() ? `?phone=${encodeURIComponent(diagnosePhone.trim())}` : ""}`,
+        token
+      );
       const lines: string[] = [];
       if (result.configured !== true) lines.push("⚠️ متغيرات Green API غير مضبوطة على الخادم.");
       if (typeof result.instanceState === "string") {
@@ -170,6 +174,39 @@ export default function AdminHome() {
       if (typeof result.instancePhone === "string" && result.instancePhone) lines.push(`📱 رقم الـ Instance: ${result.instancePhone}`);
       if (result.groupFound === true) lines.push(`✅ الجروب موجود وعدد المشاركين: ${String(result.participantCount)}.`);
       if (result.groupError) lines.push(`❌ فشل قراءة الجروب: ${String(result.groupError)} — تأكد من GREEN_API_GROUP_ID.`);
+      if (result.groupFound === true) {
+        lines.push(result.botIsAdmin === true
+          ? "✅ رقم البوت أدمن في الجروب ويقدر يحذف الرسائل."
+          : result.botInGroup === true
+            ? "❌ رقم البوت مش أدمن في الجروب، فما بيقدر يحذف رسائل الأعضاء. خلّيه أدمن."
+            : "❌ رقم البوت مش موجود بين أعضاء الجروب.");
+      }
+      if (result.settingsError) lines.push(`❌ تعذر قراءة إعدادات الـ Webhook: ${String(result.settingsError)}`);
+      if (result.incomingWebhook !== undefined) {
+        lines.push(result.incomingWebhook === "yes" && result.webhookUrl
+          ? `✅ استقبال الرسائل مفعّل على: ${String(result.webhookUrl)}`
+          : `❌ استقبال الرسائل (incomingWebhook) غير مفعّل أو رابط الـ Webhook فارغ (${String(result.webhookUrl ?? "")}).`);
+      }
+      if (Array.isArray(result.excludedPhones)) lines.push(`🛡️ أرقام مستثناة من الحذف: ${result.excludedPhones.join("، ") || "لا يوجد"}`);
+      if (result.webhookQueue && typeof result.webhookQueue === "object") {
+        lines.push(`📥 طابور الرسائل: ${Object.entries(result.webhookQueue as Record<string, number>).map(([status, count]) => `${status}: ${count}`).join("، ") || "فارغ"}`);
+      }
+      const webhookErrors = Array.isArray(result.latestWebhookErrors) ? result.latestWebhookErrors as Array<{ lastError: string }> : [];
+      if (webhookErrors.length) lines.push(`⚠️ آخر أخطاء المعالجة: ${webhookErrors.map((item) => item.lastError).join(" ؛ ")}`);
+      const sweep = result.lastSweep as { at: string; deleted: number; unresolvedSenders: number; error: string | null } | null;
+      lines.push(sweep
+        ? sweep.error ? `❌ آخر فحص حذف فشل: ${sweep.error}` : `🧹 آخر فحص حذف: ${new Date(sweep.at).toLocaleTimeString("ar-JO")} وحذف ${sweep.deleted} رسالة.`
+        : "⏳ فحص الحذف لم يعمل بعد منذ آخر تشغيل.");
+      if (sweep?.unresolvedSenders) {
+        lines.push(`❌ ${sweep.unresolvedSenders} رسالة ما قدر النظام يعرف رقم مرسلها (معرّف واتساب بدل الرقم)، فما بيقدر يقرر يحذفها.`);
+      }
+      const deletionIssues = Array.isArray(result.recentDeletionIssues) ? result.recentDeletionIssues as Array<{ error: string }> : [];
+      if (deletionIssues.length) lines.push(`❌ آخر أخطاء الحذف: ${deletionIssues.slice(0, 3).map((item) => item.error).join(" ؛ ")}`);
+      const phoneCheck = result.phoneCheck as { phone?: string; excluded?: boolean; hasAccount?: boolean; status?: string | null; balanceJod?: number | null; shouldDelete?: boolean; error?: string } | undefined;
+      if (phoneCheck?.error) lines.push(`❌ فحص الرقم: ${phoneCheck.error}`);
+      else if (phoneCheck) {
+        lines.push(`🔎 ${phoneCheck.phone}: ${phoneCheck.excluded ? "مستثنى (رقم إدارة) فما بتنحذف رسائله" : !phoneCheck.hasAccount ? "ما إله حساب" : `الحالة ${phoneCheck.status}، الرصيد ${phoneCheck.balanceJod} د.أ`} — ${phoneCheck.shouldDelete ? "رسائله لازم تنحذف" : "رسائله مسموحة"}.`);
+      }
       setNotice(lines.join(" | ") || JSON.stringify(result));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر تشخيص الاتصال.");
@@ -520,7 +557,8 @@ export default function AdminHome() {
           <article className="panel import-panel">
             <div className="panel-heading"><span className="panel-icon blue"><UserRoundPlus size={19} /></span><div><h2>إضافة الكباتن</h2><p>استيراد المشاركين من مجموعة Green API المحددة</p></div></div>
             <div className="import-visual"><div className="avatar-stack"><span>ك</span><span>ر</span><span>م</span><b>+</b></div><span>إضافة آمنة للمجموعة المحددة <span className="flag-small">🇯🇴</span></span></div>
-            <button className="button ghost full" disabled={busy} onClick={() => void diagnose()}><BadgeCheck size={17} /> فحص اتصال Green API</button>
+            <input className="search" value={diagnosePhone} onChange={(event) => setDiagnosePhone(event.target.value)} placeholder="رقم لفحص سبب عدم حذف رسائله (اختياري)" />
+            <button className="button ghost full" disabled={busy} onClick={() => void diagnose()}><BadgeCheck size={17} /> فحص اتصال Green API والحذف</button>
             <button className="button primary full" disabled={busy} onClick={() => void importCaptains()}><UserRoundPlus size={17} /> {busy ? "جارٍ الاستيراد..." : "مزامنة أعضاء المجموعة"}</button>
             <p className="hint">الحسابات الجديدة تبدأ بكلمة مرور مؤقتة <bdi>123456</bdi> ورصيد صفر، وتحتاج إدخال الاسم عند أول دخول.</p>
           </article>
