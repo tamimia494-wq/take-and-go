@@ -110,3 +110,9 @@ test("reports the missing charge of the captain who took over the job", () => {
   assert.equal(issues[0]!.repairable, true);
   assert.equal(issues[0]!.missingEntries.length, 4);
 });
+
+test("accepts a captain charged again after the owner liked their reply a second time", () => {
+  const relikedJob = { ...job, replies: [{ captainId: "rider", status: "CHARGED" }] };
+  const entries = [...chargedEntries, ...reversalEntries("rider"), ...chargedEntries];
+  assert.deepEqual(auditCommissionLedger([relikedJob], [owner], entries), []);
+});

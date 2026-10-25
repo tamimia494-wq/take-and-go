@@ -34,7 +34,7 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
     });
     if (!reply) return { result: "not_tracked", amountFils: 0 };
     // A reply is rejected when another reply on the job was charged first; it becomes chargeable again once that like is removed.
-    if (reply.status !== ReplyStatus.PENDING && reply.status !== ReplyStatus.REJECTED) {
+    if (reply.status === ReplyStatus.CHARGED || reply.status === ReplyStatus.PROCESSING) {
       return {
         result: "already_processed",
         amountFils: reply.job.commissionFils,
@@ -42,7 +42,7 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
         priceDinars: reply.job.priceDinars
       };
     }
-    if (!reply.captain || reply.captain.status !== "ACTIVE") {
+    if (!reply.captain) {
       await tx.whatsAppReply.update({
         where: { id: reply.id },
         data: { status: ReplyStatus.REJECTED }
@@ -67,7 +67,7 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
     }
 
     const replyClaim = await tx.whatsAppReply.updateMany({
-      where: { id: reply.id, status: { in: [ReplyStatus.PENDING, ReplyStatus.REJECTED] } },
+      where: { id: reply.id, status: { in: [ReplyStatus.PENDING, ReplyStatus.REJECTED, ReplyStatus.CANCELED] } },
       data: { status: ReplyStatus.PROCESSING }
     });
     if (replyClaim.count !== 1) {
@@ -84,9 +84,10 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
       data: { status: JobStatus.PROCESSING }
     });
     if (claimed.count !== 1) {
+      // A reversed reply keeps its CANCELED status so the ledger audit still expects its reversal.
       await tx.whatsAppReply.update({
         where: { id: reply.id },
-        data: { status: ReplyStatus.REJECTED }
+        data: { status: reply.status === ReplyStatus.CANCELED ? ReplyStatus.CANCELED : ReplyStatus.REJECTED }
       });
       return {
         result: "already_processed",
@@ -142,7 +143,7 @@ async function recordJobCharge(
   const chargedBefore = await tx.ledgerEntry.count({
     where: { reference: job.id, type: { in: [LedgerType.RIDER_COMMISSION, LedgerType.ORDER_COMMISSION] } }
   });
-  const keyPrefix = chargedBefore ? `job:${job.id}:reply:${replyId}` : `job:${job.id}`;
+  const keyPrefix = chargedBefore ? `job:${job.id}:reply:${replyId}:${chargedBefore}` : `job:${job.id}`;
   const commissionEntries = [
     {
       type: LedgerType.RIDER_COMMISSION,
@@ -208,7 +209,11 @@ async function chargeNextApprovedReply(
   const job = await tx.whatsAppJob.findUniqueOrThrow({ where: { id: jobId } });
   if (job.status !== JobStatus.PENDING) return null;
   const candidates = await tx.whatsAppReply.findMany({
-    where: { jobId, approvedAt: { not: null }, status: { in: [ReplyStatus.PENDING, ReplyStatus.REJECTED] } },
+    where: {
+      jobId,
+      approvedAt: { not: null },
+      status: { in: [ReplyStatus.PENDING, ReplyStatus.REJECTED, ReplyStatus.CANCELED] }
+    },
     orderBy: { approvedAt: "asc" }
   });
   if (!candidates.length) return null;
@@ -343,7 +348,7 @@ export async function removeJobLike(replyMessageId: string): Promise<LikeRemoval
       reply.job,
       reply.captainId,
       owner.id,
-      `job-unlike:${reply.id}`,
+      `job-unlike:${reply.id}:${await tx.ledgerEntry.count({ where: { reference: reply.jobId, type: LedgerType.ADJUSTMENT } })}`,
       `إرجاع ${describeJobPrice(reply.job.riderPriceDinars, reply.job.orderPriceDinars)} بعد إزالة اللايك`,
       "عكس العمولة بعد إزالة اللايك"
     );

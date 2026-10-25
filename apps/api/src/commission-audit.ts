@@ -74,14 +74,22 @@ export function auditCommissionLedger(
         { type: "RIDER_COMMISSION", amountFils: job.riderCommissionFils },
         { type: "ORDER_COMMISSION", amountFils: job.orderCommissionFils }
       ].filter((component) => component.amountFils > 0);
-      for (const reply of [...chargedReplies, ...reversedReplies]) {
-        if (!reply.captainId) continue;
-        for (const component of components) {
-          expectedEntries.push({ captainId: reply.captainId, type: component.type, amountFils: -component.amountFils });
-          expectedEntries.push({ captainId: owner.id, type: component.type, amountFils: component.amountFils });
+      // A captain can be charged, refunded after the like is removed, and charged again when it comes back.
+      const captainIds = new Set([...chargedReplies, ...reversedReplies].flatMap((reply) => reply.captainId ? [reply.captainId] : []));
+      for (const captainId of captainIds) {
+        const recordedReversals = actualEntries.filter((entry) =>
+          entry.captainId === captainId && entry.type === "ADJUSTMENT" && entry.amountFils === job.commissionFils
+        ).length;
+        const reversals = Math.max(recordedReversals, reversedReplies.filter((reply) => reply.captainId === captainId).length);
+        const charges = reversals + chargedReplies.filter((reply) => reply.captainId === captainId).length;
+        for (let charge = 0; charge < charges; charge += 1) {
+          for (const component of components) {
+            expectedEntries.push({ captainId, type: component.type, amountFils: -component.amountFils });
+            expectedEntries.push({ captainId: owner.id, type: component.type, amountFils: component.amountFils });
+          }
         }
-        if (reply.status === "CANCELED") {
-          expectedEntries.push({ captainId: reply.captainId, type: "ADJUSTMENT", amountFils: job.commissionFils });
+        for (let reversal = 0; reversal < reversals; reversal += 1) {
+          expectedEntries.push({ captainId, type: "ADJUSTMENT", amountFils: job.commissionFils });
           for (const component of components) {
             expectedEntries.push({ captainId: owner.id, type: "ADJUSTMENT", amountFils: -component.amountFils });
           }

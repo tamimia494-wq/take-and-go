@@ -12,7 +12,7 @@ import {
 } from "./money";
 import { cancelChargedJob, processJobReaction, removeJobLike } from "./accounting";
 import { calculateCommissionFils, extractPriceAfterLabel } from "./pricing";
-import { isCancellationReaction } from "./reactions";
+import { isCancellationReaction, isLikeReaction } from "./reactions";
 
 type Webhook = {
   typeWebhook?: string;
@@ -388,7 +388,7 @@ export async function backfillReplyApprovalsFromHistory(count = 300): Promise<{
 
   let approvalsRecorded = 0;
   for (const { actor, targetMessageId, reaction, timestamp } of latestReaction.values()) {
-    if (reaction !== "👍" && reaction !== "👍🏻") continue;
+    if (!isLikeReaction(reaction)) continue;
     const reply = await prisma.whatsAppReply.findUnique({
       where: { messageId: targetMessageId },
       include: { job: { select: { sourceSenderPhone: true } } }
@@ -539,14 +539,14 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     stringValue(reactionData.targetMessageId) ??
     stringValue(objectValue(data.quotedMessage)?.stanzaId) ??
     stringValue(objectValue(data.quotedMessage)?.idMessage);
-  const recognizedReaction = normalizedReaction === "👍" || normalizedReaction === "👍🏻" ||
+  const recognizedReaction = isLikeReaction(normalizedReaction) ||
     isCancellationReaction(normalizedReaction);
   if (recognizedReaction && (!targetMessageId || !actor)) {
     throw new Error(`Reaction ${webhook.idMessage ?? "unknown"} is missing its target message or actor.`);
   }
   if (!targetMessageId || !actor) return;
 
-  if (normalizedReaction === "👍" || normalizedReaction === "👍🏻") {
+  if (isLikeReaction(normalizedReaction)) {
     const reply = await prisma.whatsAppReply.findUnique({
       where: { messageId: targetMessageId },
       include: { job: { select: { id: true, sourceMessageId: true, sourceSenderPhone: true } } }
@@ -571,7 +571,7 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     if (!sourceSenderPhone) {
       throw new Error(`Owner phone for job ${reply.job.id} could not be resolved yet.`);
     }
-    if (actor !== sourceSenderPhone) {
+    if (!samePhone(actor, sourceSenderPhone)) {
       console.warn(`Green API 👍 reaction ${webhook.idMessage ?? "unknown"} ignored: it was not sent by the job owner.`);
       return;
     }

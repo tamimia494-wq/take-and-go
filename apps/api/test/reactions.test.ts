@@ -13,3 +13,9 @@ test("does not treat unrelated reactions as cancellation", () => {
     assert.equal(isCancellationReaction(reaction), false);
   }
 });
+
+test("recognizes a like in every skin tone", async () => {
+  const { isLikeReaction } = await import("../src/reactions");
+  for (const like of ["👍", "👍️", "👍🏻", "👍🏼", "👍🏽", "👍🏾", "👍🏿"]) assert.equal(isLikeReaction(like), true, like);
+  for (const other of ["", "❤️", "👎", "👍👍"]) assert.equal(isLikeReaction(other), false, other);
+});
