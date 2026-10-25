@@ -659,6 +659,8 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     const result = await removeJobLike(targetMessageId);
     if (result.result === "transferred") {
       console.info(`WhatsApp job ${reply.jobId} moved from captain ${result.fromCaptainId} to ${result.toCaptainId} after the owner removed 👍.`);
+    } else if (result.result === "owner_insufficient") {
+      console.warn(`Like removal on job ${reply.jobId} was refused: the owner's balance cannot return the commission.`);
     } else if (result.result === "released") {
       console.info(`WhatsApp job ${reply.jobId} was refunded to captain ${result.fromCaptainId}; no other reply has the owner's 👍.`);
     }
@@ -700,6 +702,8 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     const result = await cancelChargedJob(reply.messageId, actor);
     if (result.result === "canceled") {
       console.info(`WhatsApp job ${reply.job.id} commission was reversed after an authorized X reaction.`);
+    } else if (result.result === "owner_insufficient") {
+      console.warn(`WhatsApp job ${reply.job.id} was not reversed: the owner's balance cannot return the commission.`);
     } else if (result.result === "not_charged") {
       console.warn(`WhatsApp job ${reply.job.id} was not reversed after X: it was not charged.`);
       if (reply.job.sourceSenderPhone && samePhone(reply.job.sourceSenderPhone, actor)) {

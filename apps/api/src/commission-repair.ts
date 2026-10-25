@@ -66,8 +66,22 @@ export async function repairCommissions(historyCount = 300) {
     const runAt = Date.now();
     let entriesCreated = 0;
     let repairedJobs = 0;
+    const insufficientJobs: string[] = [];
     for (const issue of audit.issues) {
       if (!issue.repairable) continue;
+      // Skip a job whose missing debits would push any balance below zero.
+      const netByCaptain = new Map<string, number>();
+      for (const entry of issue.missingEntries) {
+        netByCaptain.set(entry.captainId, (netByCaptain.get(entry.captainId) ?? 0) + entry.amountFils);
+      }
+      const balances = await tx.captain.findMany({
+        where: { id: { in: [...netByCaptain.keys()] } },
+        select: { id: true, balanceFils: true }
+      });
+      if (balances.some((captain) => captain.balanceFils + (netByCaptain.get(captain.id) ?? 0) < 0)) {
+        insufficientJobs.push(issue.jobId);
+        continue;
+      }
       repairedJobs += 1;
       for (const [index, entry] of issue.missingEntries.entries()) {
         const captain = await tx.captain.update({
@@ -88,7 +102,7 @@ export async function repairCommissions(historyCount = 300) {
         entriesCreated += 1;
       }
     }
-    return { likedCharged: likes.charged, likedSkipped: likes.skipped, repairedJobs, entriesCreated };
+    return { likedCharged: likes.charged, likedSkipped: likes.skipped, repairedJobs, entriesCreated, insufficientJobs };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 60_000, maxWait: 10_000 });
   return { ...repaired, history, historyError, audit: await runCommissionAudit(prisma) };
 }
