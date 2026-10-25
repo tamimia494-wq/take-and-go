@@ -3,7 +3,7 @@ import { JobCategory, Prisma, WebhookEventStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { config } from "./config";
 import { prisma } from "./db";
-import { deleteGroupMessage, fetchGroupHistory, fetchRecentIncomingMessages, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, greenApiRequest, resolveGroupSenderPhone, sendGroupMessage } from "./green-api";
+import { deleteGroupMessage, fetchGroupHistory, fetchRecentIncomingMessages, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, GreenApiRequestError, greenApiRequest, resolveGroupSenderPhone, sendGroupMessage } from "./green-api";
 import {
   hasSufficientCaptainReplyBalance,
   MINIMUM_CAPTAIN_REPLY_BALANCE_FILS,
@@ -147,7 +147,8 @@ async function processWebhookEvent(eventId: string): Promise<void> {
     });
   } catch (error) {
     const ageMs = Date.now() - event.createdAt.getTime();
-    const terminal = ageMs >= 60 * 60 * 60 * 1000;
+    const terminal = ageMs >= 60 * 60 * 60 * 1000 ||
+      (error instanceof GreenApiRequestError && error.status === 466);
     const backoffMs = Math.min(15 * 60_000, 30_000 * 2 ** Math.min(event.attempts, 5));
     await prisma.whatsAppWebhookEvent.update({
       where: { id: eventId },
@@ -407,6 +408,54 @@ export async function backfillReplyApprovalsFromHistory(count = 300): Promise<{
   return { jobsRecorded, repliesRecorded, reactionsFound: reactions.length, approvalsRecorded };
 }
 
+const sweptMessageIds = new Set<string>();
+
+/**
+ * Deletes recent group messages that live processing missed: anything from a number without an active account,
+ * and fresh messages the system never recorded from captains below the minimum balance.
+ */
+export async function sweepUnauthorizedMessages(count = 100): Promise<{ deleted: number }> {
+  const groupId = config.greenApiGroupId;
+  if (!groupId) return { deleted: 0 };
+  const history = await fetchGroupHistory(count);
+  const nowSeconds = Date.now() / 1000;
+  let deleted = 0;
+  for (const entry of history) {
+    const messageId = stringValue(entry.idMessage);
+    const senderId = stringValue(entry.senderId) ?? "";
+    const timestamp = Number(entry.timestamp ?? 0);
+    if (!messageId || !senderId || sweptMessageIds.has(messageId)) continue;
+    if (stringValue(entry.type) !== "incoming" || entry.isDeleted === true) continue;
+    if (stringValue(entry.typeMessage) === "reactionMessage" || stringValue(entry.typeMessage) === "deletedMessage") continue;
+    if (nowSeconds - timestamp > 60 * 60 * 60) continue;
+    const senderPhone = phoneFromChatId(senderId) ?? await resolveGroupSenderPhone(senderId);
+    if (!senderPhone || isExcludedAdminPhone(senderPhone)) continue;
+    const captain = await prisma.captain.findUnique({
+      where: { phone: senderPhone },
+      select: { status: true, balanceFils: true }
+    });
+    let unauthorized = !captain || captain.status !== "ACTIVE";
+    if (!unauthorized && captain!.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS && nowSeconds - timestamp <= 10 * 60) {
+      // A charged captain's balance can drop after a valid message, so only messages the system never recorded count.
+      const [job, reply] = await Promise.all([
+        prisma.whatsAppJob.findUnique({ where: { groupId_sourceMessageId: { groupId, sourceMessageId: messageId } }, select: { id: true } }),
+        prisma.whatsAppReply.findUnique({ where: { messageId }, select: { id: true } })
+      ]);
+      unauthorized = !job && !reply;
+    }
+    if (!unauthorized) continue;
+    try {
+      await deleteGroupMessage(messageId);
+      deleted += 1;
+    } catch (error) {
+      console.warn(`Sweep could not delete message ${messageId}:`, error);
+    }
+    sweptMessageIds.add(messageId);
+  }
+  if (sweptMessageIds.size > 5000) sweptMessageIds.clear();
+  return { deleted };
+}
+
 function normalizeIncomingWebhook(webhook: Webhook): Webhook | null {
   if (webhook.typeWebhook === "incomingMessageReceived") return webhook.idMessage ? webhook : null;
   if (webhook.type !== "incoming" || webhook.isDeleted || !webhook.idMessage || !webhook.chatId) return null;
@@ -459,7 +508,6 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   const quotedJob = sourceMessageId
     ? await prisma.whatsAppJob.findUnique({ where: { groupId_sourceMessageId: { groupId, sourceMessageId } } })
     : null;
-  if (!text && !quotedJob) return;
   if (sourceMessageId && !quotedJob && text && isConfirmation(text)) {
     throw new Error(`Source job ${sourceMessageId} for confirmation ${messageId} is not available yet.`);
   }
@@ -489,6 +537,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
       return;
     }
   }
+  if (!text && !quotedJob) return;
 
   if (quotedJob) {
     // Replies to a job that is already taken are kept too, so the job can move to them if the owner's like moves.
@@ -708,6 +757,7 @@ async function deleteRejectedReplyMessage(messageId: string): Promise<void> {
       return;
     } catch (error) {
       lastError = error;
+      if (error instanceof GreenApiRequestError && error.status === 466) break;
       if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
     }
   }

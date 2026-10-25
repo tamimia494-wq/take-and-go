@@ -1,6 +1,16 @@
 import { config } from "./config";
 import { phoneFromChatId } from "./money";
 
+export class GreenApiRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+    this.name = "GreenApiRequestError";
+  }
+}
+
 const GROUP_SENDER_CACHE_TTL_MS = 5 * 60 * 1000;
 const groupSenderCache = new Map<string, { expiresAt: number; phonesById: Map<string, string> }>();
 
@@ -36,7 +46,7 @@ export async function greenApiRequest<T>(
       typeof data === "object" && data !== null && "message" in data
         ? String((data as { message: unknown }).message)
         : `Green API request failed (${response.status}).`;
-    throw new Error(message);
+    throw new GreenApiRequestError(message, response.status);
   }
   if (typeof data !== "object" || data === null) {
     throw new Error("Green API returned an unexpected response.");

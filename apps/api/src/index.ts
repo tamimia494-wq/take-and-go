@@ -7,7 +7,7 @@ import { prisma } from "./db";
 import { chargeWeeklyFloor, chargeWeeklyFloorIfDue } from "./accounting";
 import { repairCommissions } from "./commission-repair";
 import { router } from "./routes";
-import { receiveGreenApiWebhook, replayRecentMessages, retryPendingGreenApiWebhooks } from "./whatsapp";
+import { receiveGreenApiWebhook, replayRecentMessages, retryPendingGreenApiWebhooks, sweepUnauthorizedMessages } from "./whatsapp";
 
 const app = express();
 const allowedOrigins = [config.captainAppUrl, config.adminAppUrl];
@@ -52,6 +52,23 @@ cron.schedule("*/5 * * * *", () => {
     })
     .finally(() => {
       commissionRepairRunning = false;
+    });
+});
+
+// Deletes messages from inactive or low-balance accounts that slipped past live processing.
+let sweepRunning = false;
+cron.schedule("* * * * *", () => {
+  if (sweepRunning) return;
+  sweepRunning = true;
+  void sweepUnauthorizedMessages()
+    .then(({ deleted }) => {
+      if (deleted) console.info(`Unauthorized message sweep deleted ${deleted} messages.`);
+    })
+    .catch((error: unknown) => {
+      console.error("Unauthorized message sweep failed:", error);
+    })
+    .finally(() => {
+      sweepRunning = false;
     });
 });
 
