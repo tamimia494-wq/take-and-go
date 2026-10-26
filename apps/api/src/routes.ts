@@ -8,6 +8,8 @@ import { prisma } from "./db";
 import { commissionUnits } from "./pricing";
 import { fromFils, MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, normalizePhone, phoneFromChatId, toFils } from "./money";
 import { getDeletionStatus, importGroupCaptains, isExcludedPhone } from "./whatsapp";
+import { getSocketState, logoutWhatsAppSocket, startWhatsAppSocket } from "./whatsapp-socket";
+import QRCode from "qrcode";
 import { greenApiRequest } from "./green-api";
 import { config } from "./config";
 
@@ -418,6 +420,7 @@ router.get("/admin/green-api/diagnose", requireAuth("admin"), async (req, res) =
   result.webhookQueue = Object.fromEntries(queue.map((row) => [row.status, row._count._all]));
   result.latestWebhookErrors = latestErrors;
   Object.assign(result, getDeletionStatus());
+  result.socket = getSocketState().status;
 
   const phoneQuery = typeof req.query.phone === "string" ? req.query.phone : "";
   if (phoneQuery) {
@@ -441,6 +444,26 @@ router.get("/admin/green-api/diagnose", requireAuth("admin"), async (req, res) =
     }
   }
   res.json(result);
+});
+
+router.get("/admin/whatsapp-link", requireAuth("admin"), async (_req, res) => {
+  const state = getSocketState();
+  res.json({
+    status: state.status,
+    phone: state.phone,
+    error: state.error,
+    qrDataUrl: state.qr ? await QRCode.toDataURL(state.qr, { margin: 1, width: 280 }) : null
+  });
+});
+
+router.post("/admin/whatsapp-link/start", requireAuth("admin"), async (_req, res) => {
+  void startWhatsAppSocket();
+  res.json({ status: getSocketState().status });
+});
+
+router.post("/admin/whatsapp-link/logout", requireAuth("admin"), async (_req, res) => {
+  await logoutWhatsAppSocket();
+  res.json({ status: getSocketState().status });
 });
 
 router.post("/admin/captains/import", requireAuth("admin"), async (req, res) => {

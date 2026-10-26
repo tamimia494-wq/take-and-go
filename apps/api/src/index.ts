@@ -6,8 +6,9 @@ import { config } from "./config";
 import { prisma } from "./db";
 import { chargeWeeklyFloor, chargeWeeklyFloorIfDue } from "./accounting";
 import { repairCommissions } from "./commission-repair";
+import { hasStoredSession, onSocketGroupMessage, startWhatsAppSocket } from "./whatsapp-socket";
 import { router } from "./routes";
-import { receiveGreenApiWebhook, replayRecentMessages, retryPendingGreenApiWebhooks, sweepUnauthorizedMessages } from "./whatsapp";
+import { enqueueIncomingWebhook, receiveGreenApiWebhook, replayRecentMessages, retryPendingGreenApiWebhooks, sweepUnauthorizedMessages } from "./whatsapp";
 
 const app = express();
 const allowedOrigins = [config.captainAppUrl, config.adminAppUrl];
@@ -81,6 +82,14 @@ cron.schedule("* * * * *", () => {
 void chargeWeeklyFloorIfDue().catch((error: unknown) => {
   console.error("Weekly group-floor catch-up failed:", error);
 });
+
+// Group messages from the linked WhatsApp socket go through the same inbox as Green API webhooks.
+onSocketGroupMessage(enqueueIncomingWebhook);
+void hasStoredSession()
+  .then((linked) => (linked ? startWhatsAppSocket() : undefined))
+  .catch((error: unknown) => {
+    console.error("Could not restore the WhatsApp socket session:", error);
+  });
 
 const server = app.listen(config.port, () => {
   console.log(`Take & Go API listening on port ${config.port}`);

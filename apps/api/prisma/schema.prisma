@@ -187,3 +187,9 @@ model MaintenanceRun {
   id          String   @id
   completedAt DateTime @default(now())
 }
+
+model WhatsAppAuthKey {
+  id        String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

@@ -19,6 +19,12 @@ type CommissionAudit = {
   repairableJobs: number;
   issues: Array<{ jobId: string; status: string; reasons: string[]; repairable: boolean }>;
 };
+type WhatsAppLink = {
+  status: "not_linked" | "connecting" | "waiting_for_qr" | "connected" | "logged_out";
+  phone: string | null;
+  error: string | null;
+  qrDataUrl: string | null;
+};
 type CommissionRepair = {
   likedCharged: Array<{ jobId: string }>;
   likedSkipped: Array<{ jobId: string; reason: string }>;
@@ -59,6 +65,7 @@ export default function AdminHome() {
   const [receiptPreview, setReceiptPreview] = useState<{ id: string; url: string } | null>(null);
   const [commissionAudit, setCommissionAudit] = useState<CommissionAudit | null>(null);
   const [diagnosePhone, setDiagnosePhone] = useState("");
+  const [whatsAppLink, setWhatsAppLink] = useState<WhatsAppLink | null>(null);
   const transferRequest = useRef<{ fingerprint: string; requestId: string } | null>(null);
 
   const refresh = useCallback(async (authToken: string) => {
@@ -102,6 +109,41 @@ export default function AdminHome() {
   useEffect(() => () => {
     if (receiptPreview) URL.revokeObjectURL(receiptPreview.url);
   }, [receiptPreview]);
+
+  // Poll the WhatsApp link while it waits for the QR scan or connects, so the QR stays current.
+  useEffect(() => {
+    if (!token || (whatsAppLink?.status !== "waiting_for_qr" && whatsAppLink?.status !== "connecting")) return;
+    const interval = window.setInterval(() => {
+      void api<WhatsAppLink>("/admin/whatsapp-link", token).then(setWhatsAppLink).catch(() => undefined);
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [token, whatsAppLink?.status]);
+
+  useEffect(() => {
+    if (!token) return;
+    void api<WhatsAppLink>("/admin/whatsapp-link", token).then(setWhatsAppLink).catch(() => undefined);
+  }, [token]);
+
+  async function startWhatsAppLink() {
+    setError("");
+    try {
+      await api("/admin/whatsapp-link/start", token, { method: "POST" });
+      setWhatsAppLink(await api<WhatsAppLink>("/admin/whatsapp-link", token));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر بدء ربط الواتساب.");
+    }
+  }
+
+  async function logoutWhatsAppLink() {
+    if (!window.confirm("فصل ربط الواتساب المباشر والرجوع لـ Green API؟")) return;
+    setError("");
+    try {
+      await api("/admin/whatsapp-link/logout", token, { method: "POST" });
+      setWhatsAppLink(await api<WhatsAppLink>("/admin/whatsapp-link", token));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر فصل الربط.");
+    }
+  }
 
   async function login(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -193,6 +235,9 @@ export default function AdminHome() {
       }
       const webhookErrors = Array.isArray(result.latestWebhookErrors) ? result.latestWebhookErrors as Array<{ lastError: string }> : [];
       if (webhookErrors.length) lines.push(`⚠️ آخر أخطاء المعالجة: ${webhookErrors.map((item) => item.lastError).join(" ؛ ")}`);
+      lines.push(result.socket === "connected"
+        ? "🔗 الربط المباشر متصل: الحذف يمر عبره بدون Green API."
+        : "🔗 الربط المباشر غير متصل: الحذف يمر عبر Green API.");
       const sweep = result.lastSweep as { at: string; deleted: number; unresolvedSenders: number; error: string | null } | null;
       lines.push(sweep
         ? sweep.error ? `❌ آخر فحص حذف فشل: ${sweep.error}` : `🧹 آخر فحص حذف: ${new Date(sweep.at).toLocaleTimeString("ar-JO")} وحذف ${sweep.deleted} رسالة.`
@@ -561,6 +606,27 @@ export default function AdminHome() {
               <button className="button primary" disabled={busy}>حفظ الإعدادات</button>
               <p className="hint">تُخصم أرضية الجروب كل خميس الساعة 11:59 مساءً بتوقيت عمّان.</p>
             </form>
+          </article>
+          <article className="panel">
+            <div className="panel-heading"><span className="panel-icon"><ShieldCheck size={19} /></span><div><h2>ربط واتساب مباشر</h2><p>بديل مجاني لـ Green API لحذف الرسائل وإرسال التنبيهات</p></div></div>
+            {whatsAppLink?.status === "connected" ? (
+              <>
+                <p className="hint">✅ متصل برقم <bdi>{whatsAppLink.phone}</bdi>. الحذف والتنبيهات تمر عبر هذا الربط الآن.</p>
+                <button className="button ghost full" onClick={() => void logoutWhatsAppLink()}>فصل الربط</button>
+              </>
+            ) : whatsAppLink?.status === "waiting_for_qr" && whatsAppLink.qrDataUrl ? (
+              <>
+                <img src={whatsAppLink.qrDataUrl} alt="رمز QR لربط الواتساب" style={{ width: "100%", maxWidth: 280, display: "block", margin: "0 auto", background: "#fff", borderRadius: 12 }} />
+                <p className="hint">من جوال رقم البوت (الأدمن في الجروب): واتساب ← الأجهزة المرتبطة ← ربط جهاز، وامسح الرمز. الرمز يتجدد تلقائياً.</p>
+              </>
+            ) : whatsAppLink?.status === "connecting" ? (
+              <p className="hint">⏳ جارٍ الاتصال...</p>
+            ) : (
+              <>
+                <p className="hint">غير مربوط حالياً، ويعمل النظام عبر Green API.{whatsAppLink?.error ? ` آخر خطأ: ${whatsAppLink.error}` : ""}</p>
+                <button className="button primary full" onClick={() => void startWhatsAppLink()}>ربط رقم البوت (عرض QR)</button>
+              </>
+            )}
           </article>
           <article className="panel import-panel">
             <div className="panel-heading"><span className="panel-icon blue"><UserRoundPlus size={19} /></span><div><h2>إضافة الكباتن</h2><p>استيراد المشاركين من مجموعة Green API المحددة</p></div></div>

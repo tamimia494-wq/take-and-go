@@ -10,6 +10,7 @@ import {
   normalizePhone,
   phoneFromChatId
 } from "./money";
+import { rememberMessageParticipant } from "./whatsapp-socket";
 import { allowsNegativeCommission, cancelChargedJob, processJobReaction, removeJobLike } from "./accounting";
 import { calculateCommissionFils, extractPriceAfterLabel } from "./pricing";
 import { isCancellationReaction, isLikeReaction } from "./reactions";
@@ -76,26 +77,33 @@ export async function receiveGreenApiWebhook(req: Request, res: Response): Promi
     return;
   }
 
-  let event: { id: string; status: WebhookEventStatus };
   try {
-    event = await prisma.whatsAppWebhookEvent.upsert({
-      where: { eventId: incoming.idMessage! },
-      create: {
-        eventId: incoming.idMessage!,
-        payload: incoming as Prisma.InputJsonValue
-      },
-      update: {},
-      select: { id: true, status: true }
-    });
+    await enqueueIncomingWebhook(incoming);
   } catch (error) {
     console.error("Could not persist Green API webhook for processing:", error);
     res.status(503).json({ error: "Webhook could not be safely stored; please retry." });
     return;
   }
+  res.sendStatus(200);
+}
+
+/**
+ * Stores a group message and processes it once. Green API webhooks and the linked WhatsApp socket share the
+ * WhatsApp message id, so a message arriving from both is handled only once.
+ */
+export async function enqueueIncomingWebhook(incoming: Webhook): Promise<void> {
+  const event = await prisma.whatsAppWebhookEvent.upsert({
+    where: { eventId: incoming.idMessage! },
+    create: {
+      eventId: incoming.idMessage!,
+      payload: incoming as Prisma.InputJsonValue
+    },
+    update: {},
+    select: { id: true, status: true }
+  });
   if (event.status !== WebhookEventStatus.PROCESSED && event.status !== WebhookEventStatus.FAILED) {
     await processWebhookEvent(event.id);
   }
-  res.sendStatus(200);
 }
 
 export async function retryPendingGreenApiWebhooks(): Promise<void> {
@@ -497,6 +505,7 @@ async function sweepUnauthorizedMessagesOnce(count: number): Promise<{ deleted: 
     const senderId = stringValue(entry.senderId) ?? "";
     const timestamp = Number(entry.timestamp ?? 0);
     if (!messageId || !senderId || sweptMessageIds.has(messageId)) continue;
+    rememberMessageParticipant(messageId, senderId);
     if (stringValue(entry.type) !== "incoming" || entry.isDeleted === true) continue;
     if (stringValue(entry.typeMessage) === "reactionMessage" || stringValue(entry.typeMessage) === "deletedMessage") continue;
     if (nowSeconds - timestamp > 60 * 60 * 60) continue;
@@ -558,6 +567,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   const data = webhook.messageData;
   const messageId = webhook.idMessage;
   if (!groupId || chatId !== groupId || !data || !messageId) return;
+  rememberMessageParticipant(messageId, webhook.senderData?.sender ?? "");
 
   if (typeof webhook.timestamp === "number") {
     const ageMs = Date.now() - webhook.timestamp * 1000;

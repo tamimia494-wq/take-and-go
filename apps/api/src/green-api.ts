@@ -1,5 +1,6 @@
 import { config } from "./config";
 import { phoneFromChatId } from "./money";
+import { deleteViaSocket, isSocketConnected, sendViaSocket } from "./whatsapp-socket";
 
 export class GreenApiRequestError extends Error {
   constructor(
@@ -61,11 +62,17 @@ export async function getInstancePhone(): Promise<string | null> {
 }
 
 export async function sendGroupMessage(message: string): Promise<void> {
+  if (isSocketConnected()) {
+    await sendViaSocket(message);
+    return;
+  }
   const { groupId } = requireGreenApiConfig();
   await greenApiRequest("sendMessage", { chatId: groupId, message });
 }
 
 export async function deleteGroupMessage(messageId: string): Promise<void> {
+  // The linked WhatsApp socket deletes without Green API's plan limits whenever it knows the sender.
+  if (isSocketConnected() && await deleteViaSocket(messageId)) return;
   const { groupId } = requireGreenApiConfig();
   await greenApiRequest("deleteMessage", {
     chatId: groupId,
