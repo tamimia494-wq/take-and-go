@@ -8,7 +8,7 @@ import { chargeWeeklyFloor, chargeWeeklyFloorIfDue } from "./accounting";
 import { repairCommissions } from "./commission-repair";
 import { hasStoredSession, onSocketGroupMessage, startWhatsAppSocket } from "./whatsapp-socket";
 import { router } from "./routes";
-import { enqueueIncomingWebhook, receiveGreenApiWebhook, replayRecentMessages, retryPendingGreenApiWebhooks, sweepUnauthorizedMessages } from "./whatsapp";
+import { enqueueIncomingWebhook, loadMessageCutoff, receiveGreenApiWebhook, resetMessageQueue, replayRecentMessages, retryPendingGreenApiWebhooks, sweepUnauthorizedMessages } from "./whatsapp";
 
 const app = express();
 const allowedOrigins = [config.captainAppUrl, config.adminAppUrl];
@@ -85,6 +85,20 @@ void chargeWeeklyFloorIfDue().catch((error: unknown) => {
 
 // Group messages from the linked WhatsApp socket go through the same inbox as Green API webhooks.
 onSocketGroupMessage(enqueueIncomingWebhook);
+// One-time on this deploy: drop the backlog of old messages and start handling the group from now.
+void (async () => {
+  const done = await prisma.maintenanceRun.findUnique({ where: { id: "2026-10-26-message-queue-reset" } });
+  if (!done) {
+    const result = await resetMessageQueue();
+    await prisma.maintenanceRun.create({ data: { id: "2026-10-26-message-queue-reset" } });
+    console.info(`Message queue reset: dropped ${result.dropped} waiting messages; handling messages from ${result.cutoff}.`);
+  } else {
+    await loadMessageCutoff();
+  }
+})().catch((error: unknown) => {
+  console.error("Message queue reset failed:", error);
+});
+
 void hasStoredSession()
   .then((linked) => (linked ? startWhatsAppSocket() : undefined))
   .catch((error: unknown) => {

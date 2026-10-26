@@ -134,6 +134,18 @@ export default function AdminHome() {
     }
   }
 
+  async function resetWhatsAppQueue() {
+    if (!window.confirm("حذف كل الرسائل المعلّقة بالطابور وتجاهل أي رسالة قبل هذه اللحظة؟")) return;
+    setError("");
+    setNotice("");
+    try {
+      const result = await api<{ dropped: number }>("/admin/whatsapp-queue/reset", token, { method: "POST" });
+      setNotice(`تم حذف ${result.dropped} رسالة معلّقة. النظام يتعامل مع الرسائل الجديدة فقط من هذه اللحظة.`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تصفير الطابور.");
+    }
+  }
+
   async function logoutWhatsAppLink() {
     if (!window.confirm("فصل ربط الواتساب المباشر والرجوع لـ Green API؟")) return;
     setError("");
@@ -633,6 +645,7 @@ export default function AdminHome() {
             <div className="import-visual"><div className="avatar-stack"><span>ك</span><span>ر</span><span>م</span><b>+</b></div><span>إضافة آمنة للمجموعة المحددة <span className="flag-small">🇯🇴</span></span></div>
             <input className="search" value={diagnosePhone} onChange={(event) => setDiagnosePhone(event.target.value)} placeholder="رقم لفحص سبب عدم حذف رسائله (اختياري)" />
             <button className="button ghost full" disabled={busy} onClick={() => void diagnose()}><BadgeCheck size={17} /> فحص اتصال Green API والحذف</button>
+            <button className="button ghost full" disabled={busy} onClick={() => void resetWhatsAppQueue()}><Trash2 size={17} /> تصفير الرسائل المعلّقة والبدء من الآن</button>
             <button className="button primary full" disabled={busy} onClick={() => void importCaptains()}><UserRoundPlus size={17} /> {busy ? "جارٍ الاستيراد..." : "مزامنة أعضاء المجموعة"}</button>
             <p className="hint">الحسابات الجديدة تبدأ بكلمة مرور مؤقتة <bdi>123456</bdi> ورصيد صفر، وتحتاج إدخال الاسم عند أول دخول.</p>
           </article>

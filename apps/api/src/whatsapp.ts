@@ -87,6 +87,34 @@ export async function receiveGreenApiWebhook(req: Request, res: Response): Promi
   res.sendStatus(200);
 }
 
+const MESSAGE_CUTOFF_ID = "message-cutoff";
+let messageCutoffMs = 0;
+
+/** Loads the moment before which group messages are ignored, set by the last queue reset. */
+export async function loadMessageCutoff(): Promise<void> {
+  const cutoff = await prisma.maintenanceRun.findUnique({ where: { id: MESSAGE_CUTOFF_ID } });
+  messageCutoffMs = cutoff?.completedAt.getTime() ?? 0;
+}
+
+/**
+ * Drops every group message still waiting or retrying, and ignores anything sent before now, so an old backlog
+ * never turns into deletions or notices. New messages are handled as usual.
+ */
+export async function resetMessageQueue(): Promise<{ dropped: number; cutoff: string }> {
+  const now = new Date();
+  const dropped = await prisma.whatsAppWebhookEvent.updateMany({
+    where: { status: { in: [WebhookEventStatus.PENDING, WebhookEventStatus.PROCESSING] } },
+    data: { status: WebhookEventStatus.FAILED, payload: {}, lockedAt: null, lastError: "Dropped by queue reset." }
+  });
+  await prisma.maintenanceRun.upsert({
+    where: { id: MESSAGE_CUTOFF_ID },
+    create: { id: MESSAGE_CUTOFF_ID, completedAt: now },
+    update: { completedAt: now }
+  });
+  messageCutoffMs = now.getTime();
+  return { dropped: dropped.count, cutoff: now.toISOString() };
+}
+
 /**
  * Stores a group message and processes it once. Green API webhooks and the linked WhatsApp socket share the
  * WhatsApp message id, so a message arriving from both is handled only once.
@@ -508,7 +536,7 @@ async function sweepUnauthorizedMessagesOnce(count: number): Promise<{ deleted: 
     rememberMessageParticipant(messageId, senderId);
     if (stringValue(entry.type) !== "incoming" || entry.isDeleted === true) continue;
     if (stringValue(entry.typeMessage) === "reactionMessage" || stringValue(entry.typeMessage) === "deletedMessage") continue;
-    if (nowSeconds - timestamp > 60 * 60 * 60) continue;
+    if (nowSeconds - timestamp > 60 * 60 * 60 || timestamp * 1000 < messageCutoffMs) continue;
     const senderPhone = phoneFromChatId(senderId) ?? await resolveGroupSenderPhone(senderId);
     if (!senderPhone) {
       unresolvedSenders += 1;
@@ -570,6 +598,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   rememberMessageParticipant(messageId, webhook.senderData?.sender ?? "");
 
   if (typeof webhook.timestamp === "number") {
+    if (webhook.timestamp * 1000 < messageCutoffMs) return;
     const ageMs = Date.now() - webhook.timestamp * 1000;
     const allParticipantsDeleteWindowMs = 60 * 60 * 60 * 1000;
     if (ageMs > allParticipantsDeleteWindowMs) {
