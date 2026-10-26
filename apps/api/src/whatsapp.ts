@@ -3,7 +3,7 @@ import { JobCategory, Prisma, WebhookEventStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { config } from "./config";
 import { prisma } from "./db";
-import { deleteGroupMessage, fetchGroupHistory, fetchRecentIncomingMessages, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, GreenApiRequestError, greenApiRequest, resolveGroupSenderPhone } from "./green-api";
+import { deleteGroupMessage, fetchGroupHistory, fetchRecentIncomingMessages, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, GreenApiRequestError, greenApiRequest, resolveGroupSenderPhone, sendPrivateMessage } from "./green-api";
 import {
   hasSufficientCaptainReplyBalance,
   MINIMUM_CAPTAIN_REPLY_BALANCE_FILS,
@@ -616,6 +616,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
         `balance=${captain?.balanceFils ?? "unknown"} fils.`
       );
       await deleteRejectedReplyMessage(messageId);
+      await notifyDeletion(webhook, senderPhone, "رقمك غير مسجل في Take & Go أو حسابك غير مفعل. تواصل مع الإدارة لتفعيل حسابك.");
       return;
     }
     if (captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS) {
@@ -635,6 +636,11 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
         });
       }
       await deleteRejectedReplyMessage(messageId);
+      await notifyDeletion(
+        webhook,
+        senderPhone,
+        `رصيدك الحالي ${formatJod(captain.balanceFils)} د.أ، وهو أقل من الحد الأدنى للكتابة في الجروب (${formatJod(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS)} د.أ). اشحن رصيدك لتتمكن من الكتابة وأخذ الطلبات.`
+      );
       return;
     }
   }
@@ -669,6 +675,13 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
       });
       if (rejectedReply.count === 1) {
         await deleteRejectedReplyMessage(messageId);
+        await notifyDeletion(
+          webhook,
+          senderPhone,
+          rejection === "unregistered"
+            ? "رقمك غير مسجل في Take & Go أو حسابك غير مفعل. تواصل مع الإدارة لتفعيل حسابك."
+            : `ردّك على الطلب انحذف لأن رصيدك ${formatJod(captain!.balanceFils)} د.أ أقل من عمولة الطلب ${formatJod(job.commissionFils)} د.أ. اشحن رصيدك لتتمكن من أخذ الطلبات.`
+        );
       }
     }
     return;
@@ -743,6 +756,13 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
 
     if (result.result === "insufficient" || result.result === "unregistered") {
       await deleteRejectedReplyMessage(targetMessageId);
+      await notifyDeletion(
+        webhook,
+        reply.senderPhone,
+        result.result === "unregistered"
+          ? "رقمك غير مسجل في Take & Go أو حسابك غير مفعل، فما بتقدر تاخذ الطلب. تواصل مع الإدارة."
+          : `ردّك على الطلب انحذف لأن رصيدك ما بغطي عمولة الطلب (${formatJod(result.amountFils)} د.أ). اشحن رصيدك لتتمكن من أخذ الطلبات.`
+      );
     }
     return;
   }
@@ -909,6 +929,23 @@ function objectValue(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? value as Record<string, unknown>
     : undefined;
+}
+
+const deletionNoticeSentAt = new Map<string, number>();
+
+/**
+ * Tells the captain privately why their group message was deleted: at most once every 10 minutes per number,
+ * and only for messages sent in the last two minutes, so a backlog or the sweep stays silent.
+ */
+async function notifyDeletion(webhook: Webhook, phone: string, reason: string): Promise<void> {
+  if (typeof webhook.timestamp !== "number" || Date.now() - webhook.timestamp * 1000 > 2 * 60_000) return;
+  if (Date.now() - (deletionNoticeSentAt.get(phone) ?? 0) < 10 * 60_000) return;
+  deletionNoticeSentAt.set(phone, Date.now());
+  try {
+    await sendPrivateMessage(phone, `⚠️ تم حذف رسالتك من جروب Take & Go.\n${reason}`);
+  } catch (error) {
+    console.warn(`Could not send the deletion notice to ${phone}:`, error);
+  }
 }
 
 function formatJod(fils: number): string {

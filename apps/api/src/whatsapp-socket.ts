@@ -81,6 +81,11 @@ export async function deleteViaSocket(messageId: string): Promise<boolean> {
   return true;
 }
 
+export async function sendPrivateViaSocket(phone: string, message: string): Promise<void> {
+  if (!socket) throw new Error("WhatsApp socket is not connected.");
+  await socket.sendMessage(`${phone}@s.whatsapp.net`, { text: message });
+}
+
 export async function sendViaSocket(message: string): Promise<void> {
   if (!socket || !config.greenApiGroupId) throw new Error("WhatsApp socket is not connected.");
   await socket.sendMessage(config.greenApiGroupId, { text: message });

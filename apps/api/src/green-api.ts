@@ -1,6 +1,6 @@
 import { config } from "./config";
 import { phoneFromChatId } from "./money";
-import { deleteViaSocket, isSocketConnected, sendViaSocket } from "./whatsapp-socket";
+import { deleteViaSocket, isSocketConnected, sendPrivateViaSocket, sendViaSocket } from "./whatsapp-socket";
 
 export class GreenApiRequestError extends Error {
   constructor(
@@ -68,6 +68,15 @@ export async function sendGroupMessage(message: string): Promise<void> {
   }
   const { groupId } = requireGreenApiConfig();
   await greenApiRequest("sendMessage", { chatId: groupId, message });
+}
+
+/** Sends a private WhatsApp message to a phone number such as 962790000000. */
+export async function sendPrivateMessage(phone: string, message: string): Promise<void> {
+  if (isSocketConnected()) {
+    await sendPrivateViaSocket(phone, message);
+    return;
+  }
+  await greenApiRequest("sendMessage", { chatId: `${phone}@c.us`, message });
 }
 
 export async function deleteGroupMessage(messageId: string): Promise<void> {
