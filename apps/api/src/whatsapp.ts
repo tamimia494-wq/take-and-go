@@ -330,7 +330,6 @@ async function recoverJobsAndRepliesFromHistory(
       where: { phone: senderPhone },
       select: { id: true, status: true, balanceFils: true }
     });
-    if (!captain) continue;
     const sourceMessageId = stringValue(objectValue(entry.quotedMessage)?.stanzaId) ??
       stringValue(objectValue(entry.quotedMessage)?.idMessage) ??
       stringValue(objectValue(entry.extendedTextMessage)?.stanzaId);
@@ -344,7 +343,7 @@ async function recoverJobsAndRepliesFromHistory(
       : null;
     if (job) {
       // Replies from accounts that are not active are deleted live, and admins do not take orders.
-      if (captain.status !== "ACTIVE" || isExcludedAdminPhone(senderPhone)) continue;
+      if (!captain || captain.status !== "ACTIVE" || isExcludedAdminPhone(senderPhone)) continue;
       if (!allowNegative && await wasBelowMinimumBalance(captain, createdAt)) continue;
       const existing = await prisma.whatsAppReply.findUnique({ where: { messageId }, select: { id: true } });
       if (existing) continue;
@@ -362,8 +361,6 @@ async function recoverJobsAndRepliesFromHistory(
       continue;
     }
     if (!text) continue;
-    if (!isExcludedAdminPhone(senderPhone) &&
-      (captain.status !== "ACTIVE" || await wasBelowMinimumBalance(captain, createdAt))) continue;
     if (await recordJobFromMessage(groupId, messageId, senderPhone, text, createdAt)) jobsRecorded += 1;
   }
   return { jobsRecorded, repliesRecorded };
@@ -474,8 +471,8 @@ async function wasBelowMinimumBalance(
 const sweptMessageIds = new Set<string>();
 
 /**
- * Deletes recent group messages that live processing missed: anything from a number without an active account,
- * and anything sent while the captain's balance was below the minimum.
+ * Deletes recent replies to orders that live processing missed: replies from a number without an active account,
+ * or sent while the captain's balance did not cover the order's commission. Order posts and chat are left alone.
  */
 export async function sweepUnauthorizedMessages(count = 100): Promise<{ deleted: number; unresolvedSenders: number }> {
   try {
@@ -519,7 +516,7 @@ async function sweepUnauthorizedMessagesOnce(count: number): Promise<{ deleted: 
       where: { phone: senderPhone },
       select: { id: true, status: true, balanceFils: true }
     });
-    // A reply to an order also has to cover that order's commission.
+    // Only replies to an order are checked, and they have to cover that order's commission.
     const quotedId = stringValue(objectValue(entry.quotedMessage)?.stanzaId) ??
       stringValue(objectValue(entry.quotedMessage)?.idMessage) ??
       stringValue(objectValue(entry.extendedTextMessage)?.stanzaId);
@@ -529,7 +526,10 @@ async function sweepUnauthorizedMessagesOnce(count: number): Promise<{ deleted: 
         select: { commissionFils: true }
       })
       : null;
-    const requiredFils = Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, quotedJob?.commissionFils ?? 0);
+    if (!quotedJob) continue;
+    const storedReply = await prisma.whatsAppReply.findUnique({ where: { messageId }, select: { status: true } });
+    if (storedReply?.status === "CHARGED") continue;
+    const requiredFils = Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, quotedJob.commissionFils);
     const unauthorized = !captain || captain.status !== "ACTIVE" ||
       await wasBelowMinimumBalance(captain, new Date(timestamp * 1000), requiredFils);
     if (!unauthorized) continue;
@@ -608,44 +608,8 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     const adminCaptain = await prisma.captain.findUnique({ where: { phone: senderPhone }, select: { id: true } });
     if (!adminCaptain) return;
   }
-  if (!excludedAdmin) {
-    const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
-    if (!captain || captain.status !== "ACTIVE") {
-      console.warn(
-        `Deleting Green API message ${messageId}: sender account is ${!captain ? "unregistered" : captain.status.toLowerCase()}, ` +
-        `balance=${captain?.balanceFils ?? "unknown"} fils.`
-      );
-      await deleteRejectedReplyMessage(messageId);
-      await notifyDeletion(webhook, senderPhone, "رقمك غير مسجل في Take & Go أو حسابك غير مفعل. تواصل مع الإدارة لتفعيل حسابك.");
-      return;
-    }
-    if (captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS) {
-      console.warn(`Deleting Green API message ${messageId}: captain balance=${captain.balanceFils} fils is below the minimum.`);
-      if (quotedJob && await allowsNegativeCommission(prisma)) {
-        await prisma.whatsAppReply.upsert({
-          where: { messageId },
-          update: {},
-          create: {
-            messageId,
-            senderPhone,
-            jobId: quotedJob.id,
-            captainId: captain.id,
-            body: text ?? `[${stringValue(data.typeMessage) ?? "message"}]`,
-            status: "REJECTED"
-          }
-        });
-      }
-      await deleteRejectedReplyMessage(messageId);
-      await notifyDeletion(
-        webhook,
-        senderPhone,
-        `رصيدك الحالي ${formatJod(captain.balanceFils)} د.أ، وهو أقل من الحد الأدنى للكتابة في الجروب (${formatJod(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS)} د.أ). اشحن رصيدك لتتمكن من الكتابة وأخذ الطلبات.`
-      );
-      return;
-    }
-  }
+  // Anyone may post an order or chat; only a reply to an order needs an active account and enough balance.
   if (!text && !quotedJob) return;
-  // Checked after the account and balance checks, so a sender who must be deleted is never left waiting here.
   if (sourceMessageId && !quotedJob && text && isConfirmation(text)) {
     throw new Error(`Source job ${sourceMessageId} for confirmation ${messageId} is not available yet.`);
   }
@@ -669,20 +633,20 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
       ? "unregistered"
       : !hasSufficientCaptainReplyBalance(captain.balanceFils, job.commissionFils) ? "insufficient" : null;
     if (rejection) {
-      const rejectedReply = await prisma.whatsAppReply.updateMany({
+      // The reply stays stored as REJECTED: while negative charges are allowed, the owner's like can still charge it.
+      await prisma.whatsAppReply.updateMany({
         where: { messageId, status: "PENDING" },
         data: { status: "REJECTED" }
       });
-      if (rejectedReply.count === 1) {
-        await deleteRejectedReplyMessage(messageId);
-        await notifyDeletion(
-          webhook,
-          senderPhone,
-          rejection === "unregistered"
-            ? "رقمك غير مسجل في Take & Go أو حسابك غير مفعل. تواصل مع الإدارة لتفعيل حسابك."
-            : `ردّك على الطلب انحذف لأن رصيدك ${formatJod(captain!.balanceFils)} د.أ أقل من عمولة الطلب ${formatJod(job.commissionFils)} د.أ. اشحن رصيدك لتتمكن من أخذ الطلبات.`
-        );
-      }
+      console.warn(`Deleting reply ${messageId}: sender is ${rejection}, balance=${captain?.balanceFils ?? "unknown"} fils.`);
+      await deleteRejectedReplyMessage(messageId);
+      await notifyDeletion(
+        webhook,
+        senderPhone,
+        rejection === "unregistered"
+          ? "رقمك غير مسجل في Take & Go أو حسابك غير مفعل. تواصل مع الإدارة لتفعيل حسابك."
+          : `ردّك على الطلب انحذف لأن رصيدك ${formatJod(captain!.balanceFils)} د.أ أقل من عمولة الطلب ${formatJod(job.commissionFils)} د.أ. اشحن رصيدك لتتمكن من أخذ الطلبات.`
+      );
     }
     return;
   }
