@@ -616,7 +616,9 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
         `balance=${captain?.balanceFils ?? "unknown"} fils.`
       );
       await deleteRejectedReplyMessage(messageId);
-      await sendGroupMessage("⚠️ تم حذف رسالتك. رقمك غير مسجل أو حسابك غير مفعل. تواصل مع الإدارة.");
+      if (isFreshMessage(webhook)) {
+        await sendGroupMessage("⚠️ تم حذف رسالتك. رقمك غير مسجل أو حسابك غير مفعل. تواصل مع الإدارة.");
+      }
       return;
     }
     if (captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS) {
@@ -636,7 +638,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
         });
       }
       await deleteRejectedReplyMessage(messageId);
-      await sendLowBalanceNotice(senderPhone, captain.fullName);
+      if (isFreshMessage(webhook)) await sendLowBalanceNotice(senderPhone, captain.fullName);
       return;
     }
   }
@@ -672,7 +674,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
       if (rejectedReply.count === 1) {
         await deleteRejectedReplyMessage(messageId);
         if (rejection === "unregistered") {
-          await sendRejectedReplyNotice(job.priceDinars, job.commissionFils);
+          if (isFreshMessage(webhook)) await sendRejectedReplyNotice(job.priceDinars, job.commissionFils);
         }
       }
     }
@@ -749,7 +751,7 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     if (result.result === "insufficient" || result.result === "unregistered") {
       await deleteRejectedReplyMessage(targetMessageId);
       if (result.result === "unregistered") {
-        await sendRejectedReplyNotice(result.priceDinars ?? 0, result.amountFils);
+        if (isFreshMessage(webhook)) await sendRejectedReplyNotice(result.priceDinars ?? 0, result.amountFils);
       }
     }
     return;
@@ -895,6 +897,14 @@ async function deleteRejectedReplyMessage(messageId: string): Promise<void> {
 function isExcludedAdminPhone(phone: string): boolean {
   return [config.adminContactPhone, ...config.excludedAdminPhones]
     .some((value) => phoneFromChatId(value) === phone);
+}
+
+/**
+ * Notices go out only for messages sent in the last two minutes. A backlog of older messages, from retries or a
+ * replay, is still processed and deleted, but silently, so the group is not flooded with notices.
+ */
+function isFreshMessage(webhook: Webhook): boolean {
+  return typeof webhook.timestamp === "number" && Date.now() - webhook.timestamp * 1000 <= 2 * 60_000;
 }
 
 const lowBalanceNoticeSentAt = new Map<string, number>();
