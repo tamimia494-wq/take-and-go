@@ -7,7 +7,7 @@ import { repairCommissions, runCommissionAudit } from "./commission-repair";
 import { prisma } from "./db";
 import { commissionUnits } from "./pricing";
 import { fromFils, MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, normalizePhone, phoneFromChatId, toFils } from "./money";
-import { getDeletionStatus, importGroupCaptains, isExcludedPhone, resetMessageQueue } from "./whatsapp";
+import { getDeletionStatus, importGroupCaptains, isExcludedPhone } from "./whatsapp";
 import { getSocketState, logoutWhatsAppSocket, startWhatsAppSocket } from "./whatsapp-socket";
 import QRCode from "qrcode";
 import { greenApiRequest } from "./green-api";
@@ -459,10 +459,6 @@ router.get("/admin/whatsapp-link", requireAuth("admin"), async (_req, res) => {
 router.post("/admin/whatsapp-link/start", requireAuth("admin"), async (_req, res) => {
   void startWhatsAppSocket();
   res.json({ status: getSocketState().status });
-});
-
-router.post("/admin/whatsapp-queue/reset", requireAuth("admin"), async (_req, res) => {
-  res.json(await resetMessageQueue());
 });
 
 router.post("/admin/whatsapp-link/logout", requireAuth("admin"), async (_req, res) => {
