@@ -3,7 +3,7 @@ import { JobCategory, Prisma, WebhookEventStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { config } from "./config";
 import { prisma } from "./db";
-import { deleteGroupMessage, fetchGroupHistory, fetchRecentIncomingMessages, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, GreenApiRequestError, greenApiRequest, resolveGroupSenderPhone, sendGroupMessage } from "./green-api";
+import { deleteGroupMessage, fetchGroupHistory, fetchRecentIncomingMessages, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, GreenApiRequestError, greenApiRequest, resolveGroupSenderPhone } from "./green-api";
 import {
   hasSufficientCaptainReplyBalance,
   MINIMUM_CAPTAIN_REPLY_BALANCE_FILS,
@@ -616,9 +616,6 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
         `balance=${captain?.balanceFils ?? "unknown"} fils.`
       );
       await deleteRejectedReplyMessage(messageId);
-      if (isFreshMessage(webhook)) {
-        await sendGroupMessage("⚠️ تم حذف رسالتك. رقمك غير مسجل أو حسابك غير مفعل. تواصل مع الإدارة.");
-      }
       return;
     }
     if (captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS) {
@@ -638,7 +635,6 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
         });
       }
       await deleteRejectedReplyMessage(messageId);
-      if (isFreshMessage(webhook)) await sendLowBalanceNotice(senderPhone, captain.fullName);
       return;
     }
   }
@@ -673,9 +669,6 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
       });
       if (rejectedReply.count === 1) {
         await deleteRejectedReplyMessage(messageId);
-        if (rejection === "unregistered") {
-          if (isFreshMessage(webhook)) await sendRejectedReplyNotice(job.priceDinars, job.commissionFils);
-        }
       }
     }
     return;
@@ -750,9 +743,6 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
 
     if (result.result === "insufficient" || result.result === "unregistered") {
       await deleteRejectedReplyMessage(targetMessageId);
-      if (result.result === "unregistered") {
-        if (isFreshMessage(webhook)) await sendRejectedReplyNotice(result.priceDinars ?? 0, result.amountFils);
-      }
     }
     return;
   }
@@ -897,39 +887,6 @@ async function deleteRejectedReplyMessage(messageId: string): Promise<void> {
 function isExcludedAdminPhone(phone: string): boolean {
   return [config.adminContactPhone, ...config.excludedAdminPhones]
     .some((value) => phoneFromChatId(value) === phone);
-}
-
-/**
- * Notices go out only for messages sent in the last two minutes. A backlog of older messages, from retries or a
- * replay, is still processed and deleted, but silently, so the group is not flooded with notices.
- */
-function isFreshMessage(webhook: Webhook): boolean {
-  return typeof webhook.timestamp === "number" && Date.now() - webhook.timestamp * 1000 <= 2 * 60_000;
-}
-
-const lowBalanceNoticeSentAt = new Map<string, number>();
-
-/** Tells the group why a message was deleted, at most once every 10 minutes per number. */
-async function sendLowBalanceNotice(phone: string, fullName: string | null): Promise<void> {
-  const lastSentAt = lowBalanceNoticeSentAt.get(phone) ?? 0;
-  if (Date.now() - lastSentAt < 10 * 60_000) return;
-  lowBalanceNoticeSentAt.set(phone, Date.now());
-  try {
-    await sendGroupMessage(
-      `⚠️ تم حذف رسالة ${fullName ?? "الكابتن"} لأن رصيده غير كافٍ أو بالسالب. لا يمكنه الكتابة أو أخذ الطلبات حتى يشحن رصيده.`
-    );
-  } catch (error) {
-    console.warn(`Could not send the low-balance notice for ${phone}:`, error);
-  }
-}
-
-async function sendRejectedReplyNotice(
-  priceDinars: number,
-  commissionFils: number
-): Promise<void> {
-  await sendGroupMessage(
-    `⚠️ رقمك غير مسجل أو حسابك غير مفعل. قيمة الطلب ${priceDinars} د.أ وعمولته ${formatJod(commissionFils)} د.أ. يرجى التواصل مع الإدارة وشحن الرصيد لتتمكن من أخذ الطلبات.`
-  );
 }
 
 function isOrder(text: string): boolean {
