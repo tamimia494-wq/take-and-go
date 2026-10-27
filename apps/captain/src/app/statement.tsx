@@ -46,7 +46,9 @@ export type StatementTotals = {
 };
 
 export function jod(fils: number): string {
-  return `${new Intl.NumberFormat("ar-JO", { minimumFractionDigits: 2, maximumFractionDigits: 3 }).format(fils / 1000)} د.أ`;
+  // The locale's own minus sign is easy to miss in right-to-left text, so a negative amount gets an explicit one.
+  const amount = new Intl.NumberFormat("ar-JO", { minimumFractionDigits: 2, maximumFractionDigits: 3 }).format(Math.abs(fils) / 1000);
+  return `${fils < 0 ? "‎-" : ""}${amount} د.أ`;
 }
 
 export function defaultPeriod(): { from: string; to: string } {
@@ -89,7 +91,7 @@ export async function downloadPdf(element: HTMLElement, fileName: string, landsc
 
 const sheet: React.CSSProperties = {
   background: "#ffffff",
-  color: "#111827",
+  color: "#0b1f4d",
   padding: 20,
   borderRadius: 12,
   fontFamily: "inherit",
@@ -97,18 +99,32 @@ const sheet: React.CSSProperties = {
   lineHeight: 1.6
 };
 const table: React.CSSProperties = { width: "100%", borderCollapse: "collapse", margin: "8px 0 16px", fontSize: 13 };
-const cell: React.CSSProperties = { border: "1px solid #d1d5db", padding: "6px 8px", textAlign: "right" };
-const head: React.CSSProperties = { ...cell, background: "#f3f4f6", fontWeight: 700 };
-const title: React.CSSProperties = { fontSize: 15, fontWeight: 700, margin: "12px 0 4px", color: "#111827" };
+// Dark navy throughout so the statement reads clearly on screen and in the PDF.
+const navy = "#0b1f4d";
+const cell: React.CSSProperties = { border: `1px solid ${navy}`, padding: "6px 8px", textAlign: "right", color: navy };
+const head: React.CSSProperties = { ...cell, background: navy, color: "#ffffff", fontWeight: 700 };
+const title: React.CSSProperties = { fontSize: 15, fontWeight: 800, margin: "12px 0 4px", color: navy };
+
+/** Date fields that stay readable on the apps' dark pages. */
+export const dateLabelStyle: React.CSSProperties = { display: "grid", gap: 4, color: "#ffffff", fontWeight: 700 };
+export const dateInputStyle: React.CSSProperties = {
+  background: "#ffffff",
+  color: navy,
+  border: `2px solid ${navy}`,
+  borderRadius: 10,
+  padding: "8px 10px",
+  fontWeight: 700,
+  colorScheme: "light"
+};
 
 function SheetHeader({ heading, period }: { heading: string; period: { from: string; to: string } }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: "2px solid #f5b400", paddingBottom: 10, marginBottom: 8 }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `3px solid ${navy}`, paddingBottom: 10, marginBottom: 8 }}>
       <div>
         <div style={{ fontSize: 20, fontWeight: 800 }}>Take &amp; Go</div>
         <div style={{ fontSize: 16, fontWeight: 700 }}>{heading}</div>
       </div>
-      <div style={{ fontSize: 12, color: "#4b5563", textAlign: "left" }}>
+      <div style={{ fontSize: 12, color: navy, textAlign: "left", fontWeight: 600 }}>
         <div>الفترة: <bdi>{period.from}</bdi> إلى <bdi>{period.to}</bdi></div>
         <div>تاريخ الإصدار: {new Intl.DateTimeFormat("ar-JO", { dateStyle: "medium", timeStyle: "short" }).format(new Date())}</div>
       </div>
@@ -124,7 +140,7 @@ function SideTable({ side }: { side: CommissionSide }) {
         <tr><td style={cell}>ركاب</td><td style={cell}>{side.riderJobs}</td><td style={cell}>{jod(side.riderFils)}</td></tr>
         <tr><td style={cell}>أوردرات</td><td style={cell}>{side.orderJobs}</td><td style={cell}>{jod(side.orderFils)}</td></tr>
         {side.transferredFils > 0 && <tr><td style={cell}>عمولات محوّلة من الإدارة</td><td style={cell}>—</td><td style={cell}>{jod(side.transferredFils)}</td></tr>}
-        {side.refundedFils > 0 && <tr><td style={cell}>مرتجع عمولات</td><td style={cell}>—</td><td style={cell}>-{jod(side.refundedFils)}</td></tr>}
+        {side.refundedFils > 0 && <tr><td style={cell}>مرتجع عمولات</td><td style={cell}>—</td><td style={cell}>{jod(-side.refundedFils)}</td></tr>}
         <tr><td style={head}>الإجمالي</td><td style={head}>{side.riderJobs + side.orderJobs}</td><td style={head}>{jod(side.totalFils)}</td></tr>
       </tbody>
     </table>
@@ -179,10 +195,10 @@ export function NetProfitSheet({ totals, period }: { totals: StatementTotals; pe
           <tr><td style={cell}>إجمالي شحن الرصيد (+)</td><td style={cell}>{jod(totals.topUpsFils)}</td></tr>
           <tr><td style={cell}>إجمالي أرضيات الجروب (+)</td><td style={cell}>{jod(totals.groupFloorsFils)}</td></tr>
           <tr><td style={cell}>إجمالي سحب الرصيد (−)</td><td style={cell}>{jod(totals.withdrawalsFils)}</td></tr>
-          <tr><td style={{ ...head, background: "#fef3c7", fontSize: 16 }}>صافي الربح</td><td style={{ ...head, background: "#fef3c7", fontSize: 16 }}>{jod(totals.netProfitFils)}</td></tr>
+          <tr><td style={{ ...head, background: "#f5b400", color: navy, fontSize: 16 }}>صافي الربح</td><td style={{ ...head, background: "#f5b400", color: navy, fontSize: 16 }}>{jod(totals.netProfitFils)}</td></tr>
         </tbody>
       </table>
-      <div style={{ fontSize: 12, color: "#4b5563" }}>صافي الربح = شحن الرصيد + أرضيات الجروب − سحب الرصيد. مكافآت التفعيل لا تدخل في الحساب.</div>
+      <div style={{ fontSize: 12, color: navy, fontWeight: 600 }}>صافي الربح = شحن الرصيد + أرضيات الجروب − سحب الرصيد. مكافآت التفعيل لا تدخل في الحساب.</div>
     </div>
   );
 }
@@ -205,7 +221,7 @@ export function AllStatementsSheet({ captains, totals, period }: {
           <tr><td style={cell}>إجمالي شحن الرصيد (+)</td><td style={cell}>{jod(totals.topUpsFils)}</td></tr>
           <tr><td style={cell}>إجمالي أرضيات الجروب (+)</td><td style={cell}>{jod(totals.groupFloorsFils)}</td></tr>
           <tr><td style={cell}>إجمالي سحب الرصيد (−)</td><td style={cell}>{jod(totals.withdrawalsFils)}</td></tr>
-          <tr><td style={{ ...head, background: "#fef3c7" }}>صافي الربح</td><td style={{ ...head, background: "#fef3c7" }}>{jod(totals.netProfitFils)}</td></tr>
+          <tr><td style={{ ...head, background: "#f5b400", color: navy }}>صافي الربح</td><td style={{ ...head, background: "#f5b400", color: navy }}>{jod(totals.netProfitFils)}</td></tr>
           <tr><td style={cell}>إجمالي الإنتاج</td><td style={cell}>{jod(totals.producedFils)}</td></tr>
           <tr><td style={cell}>إجمالي الاستهلاك</td><td style={cell}>{jod(totals.consumedFils)}</td></tr>
           <tr><td style={cell}>مكافآت التفعيل (لا تدخل في الربح)</td><td style={cell}>{jod(totals.bonusesFils)}</td></tr>

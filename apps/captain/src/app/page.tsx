@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CaptainStatementSheet, defaultPeriod, downloadPdf, type CaptainWithStatement } from "./statement";
+import { CaptainStatementSheet, dateInputStyle, dateLabelStyle, defaultPeriod, downloadPdf, type CaptainWithStatement } from "./statement";
 import { ArrowDownLeft, ArrowLeft, ArrowUpLeft, CarFront, Check, CircleDollarSign, Clock3, Copy, LogOut, Lock, Phone, ShieldCheck, Wallet } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
@@ -391,8 +391,8 @@ export default function CaptainHome() {
         <section className="ledger-section">
           <div className="section-heading"><div><p className="eyebrow">من تاريخ إلى تاريخ</p><h2>كشف الحساب</h2></div></div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "end", margin: "8px 0 12px" }}>
-            <label>من <input type="date" value={period.from} max={period.to} onChange={(event) => setPeriod({ ...period, from: event.target.value })} /></label>
-            <label>إلى <input type="date" value={period.to} min={period.from} onChange={(event) => setPeriod({ ...period, to: event.target.value })} /></label>
+            <label style={dateLabelStyle}>من <input style={dateInputStyle} type="date" value={period.from} max={period.to} onChange={(event) => setPeriod({ ...period, from: event.target.value })} /></label>
+            <label style={dateLabelStyle}>إلى <input style={dateInputStyle} type="date" value={period.to} min={period.from} onChange={(event) => setPeriod({ ...period, to: event.target.value })} /></label>
             <button type="button" className="primary-button" disabled={busy || !period.from || !period.to} onClick={() => void loadStatement()}>عرض الكشف</button>
             {statement && <button type="button" className="topup-button" disabled={busy} onClick={() => void saveStatementPdf()}>تنزيل PDF</button>}
           </div>
