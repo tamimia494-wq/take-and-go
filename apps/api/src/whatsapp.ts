@@ -3,7 +3,7 @@ import { JobCategory, Prisma, WebhookEventStatus } from "@prisma/client";
 import type { Request, Response } from "express";
 import { config } from "./config";
 import { prisma } from "./db";
-import { deleteGroupMessage, fetchGroupHistory, fetchRecentIncomingMessages, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, GreenApiRequestError, greenApiRequest, resolveGroupSenderPhone, sendPrivateMessage } from "./green-api";
+import { deleteGroupMessage, fetchGroupHistory, fetchGroupMessage, fetchRecentIncomingMessages, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, GreenApiRequestError, greenApiRequest, resolveGroupSenderPhone, sendPrivateMessage } from "./green-api";
 import {
   hasSufficientCaptainReplyBalance,
   MINIMUM_CAPTAIN_REPLY_BALANCE_FILS,
@@ -296,6 +296,74 @@ async function recordJobFromMessage(
     throw error;
   }
   return true;
+}
+
+function journalText(entry: Record<string, unknown>): string | undefined {
+  return stringValue(entry.textMessage) ??
+    stringValue(objectValue(entry.extendedTextMessage)?.text) ??
+    stringValue(objectValue(entry.textMessageData)?.textMessage) ??
+    stringValue(objectValue(entry.extendedTextMessageData)?.text) ??
+    stringValue(entry.caption);
+}
+
+function journalQuotedId(entry: Record<string, unknown>): string | undefined {
+  return stringValue(objectValue(entry.quotedMessage)?.stanzaId) ??
+    stringValue(objectValue(entry.quotedMessage)?.idMessage) ??
+    stringValue(objectValue(entry.extendedTextMessage)?.stanzaId);
+}
+
+/**
+ * Records a reply the owner liked but the system never stored, together with the order it answers when that is
+ * missing too, by reading both messages from WhatsApp.
+ */
+async function recordMissedReply(replyMessageId: string): Promise<void> {
+  const groupId = config.greenApiGroupId;
+  if (!groupId) return;
+  let replyMessage: Record<string, unknown>;
+  try {
+    replyMessage = await fetchGroupMessage(replyMessageId);
+  } catch (error) {
+    console.warn(`Could not fetch liked reply ${replyMessageId} from WhatsApp:`, error);
+    return;
+  }
+  const sourceMessageId = journalQuotedId(replyMessage);
+  const replySenderId = stringValue(replyMessage.senderId) ?? "";
+  const replySender = phoneFromChatId(replySenderId) ?? (replySenderId ? await resolveGroupSenderPhone(replySenderId) : null);
+  if (!sourceMessageId || !replySender) return;
+
+  let job = await prisma.whatsAppJob.findUnique({ where: { groupId_sourceMessageId: { groupId, sourceMessageId } } });
+  if (!job) {
+    try {
+      const order = await fetchGroupMessage(sourceMessageId);
+      const orderText = journalText(order);
+      const orderSenderId = stringValue(order.senderId) ?? "";
+      const orderSender = phoneFromChatId(orderSenderId) ?? (orderSenderId ? await resolveGroupSenderPhone(orderSenderId) : null);
+      if (orderText && orderSender) {
+        const timestamp = Number(order.timestamp ?? 0);
+        await recordJobFromMessage(groupId, sourceMessageId, orderSender, orderText, timestamp ? new Date(timestamp * 1000) : undefined);
+      }
+    } catch (error) {
+      console.warn(`Could not fetch order ${sourceMessageId} for liked reply ${replyMessageId}:`, error);
+    }
+    job = await prisma.whatsAppJob.findUnique({ where: { groupId_sourceMessageId: { groupId, sourceMessageId } } });
+  }
+  if (!job) return;
+
+  const captain = await prisma.captain.findUnique({ where: { phone: replySender }, select: { id: true } });
+  const timestamp = Number(replyMessage.timestamp ?? 0);
+  await prisma.whatsAppReply.upsert({
+    where: { messageId: replyMessageId },
+    update: {},
+    create: {
+      messageId: replyMessageId,
+      senderPhone: replySender,
+      jobId: job.id,
+      captainId: captain?.id,
+      body: journalText(replyMessage) ?? `[${stringValue(replyMessage.typeMessage) ?? "message"}]`,
+      ...(timestamp ? { createdAt: new Date(timestamp * 1000) } : {})
+    }
+  });
+  console.info(`Recorded missed reply ${replyMessageId} on job ${job.id} after the owner's like.`);
 }
 
 /**
@@ -674,10 +742,14 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
   if (!targetMessageId || !actor) return;
 
   if (isLikeReaction(normalizedReaction)) {
+    // A like on a reply the system missed fetches that reply and its order from WhatsApp instead of waiting.
     const reply = await prisma.whatsAppReply.findUnique({
       where: { messageId: targetMessageId },
       include: { job: { select: { id: true, sourceMessageId: true, sourceSenderPhone: true } } }
-    });
+    }) ?? (await recordMissedReply(targetMessageId), await prisma.whatsAppReply.findUnique({
+      where: { messageId: targetMessageId },
+      include: { job: { select: { id: true, sourceMessageId: true, sourceSenderPhone: true } } }
+    }));
     if (!reply) {
       throw new Error(`Target reply ${targetMessageId} for 👍 reaction ${webhook.idMessage ?? "unknown"} is not available yet.`);
     }

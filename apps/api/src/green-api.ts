@@ -131,6 +131,12 @@ export async function resolveGroupSenderPhone(senderId: string): Promise<string 
     null;
 }
 
+/** Reads one group message by id, in Green API's journal format. */
+export async function fetchGroupMessage(messageId: string): Promise<Record<string, unknown>> {
+  const { groupId } = requireGreenApiConfig();
+  return greenApiRequest<Record<string, unknown>>("getMessage", { chatId: groupId, idMessage: messageId });
+}
+
 export async function getGroupMessageSenderPhone(messageId: string): Promise<string | null> {
   const { groupId } = requireGreenApiConfig();
   const history = await greenApiRequest<Array<{ idMessage?: string; senderId?: string }>>(
