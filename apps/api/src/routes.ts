@@ -6,6 +6,7 @@ import { adminLogin, captainLogin, requireAuth } from "./auth";
 import { repairCommissions, runCommissionAudit } from "./commission-repair";
 import { prisma } from "./db";
 import { commissionUnits } from "./pricing";
+import { buildStatement, statementPeriod, sumStatements, type StatementEntry } from "./statement";
 import { fromFils, MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, normalizePhone, phoneFromChatId, toFils } from "./money";
 import { getDeletionStatus, importGroupCaptains, isExcludedPhone } from "./whatsapp";
 import { getSocketState, logoutWhatsAppSocket, startWhatsAppSocket } from "./whatsapp-socket";
@@ -466,6 +467,76 @@ router.post("/admin/whatsapp-link/logout", requireAuth("admin"), async (_req, re
   res.json({ status: getSocketState().status });
 });
 
+/** Statements for one captain, or for all of them, over an Amman-time period. Amounts are in fils. */
+async function loadStatements(period: { start: Date; end: Date }, captainId?: string) {
+  const [captains, entries, openings] = await Promise.all([
+    prisma.captain.findMany({
+      where: captainId ? { id: captainId } : {},
+      orderBy: { createdAt: "asc" },
+      select: { id: true, phone: true, fullName: true, status: true, balanceFils: true }
+    }),
+    prisma.ledgerEntry.findMany({
+      where: { createdAt: { gte: period.start, lt: period.end }, ...(captainId ? { captainId } : {}) },
+      orderBy: { createdAt: "asc" },
+      select: {
+        captainId: true, type: true, amountFils: true, balanceAfterFils: true, description: true,
+        reference: true, idempotencyKey: true, createdAt: true
+      }
+    }),
+    prisma.$queryRaw<Array<{ captainId: string; balanceAfterFils: number }>>`
+      SELECT DISTINCT ON ("captainId") "captainId", "balanceAfterFils"
+      FROM "LedgerEntry"
+      WHERE "createdAt" < ${period.start}
+      ${captainId ? Prisma.sql`AND "captainId" = ${captainId}` : Prisma.empty}
+      ORDER BY "captainId", "createdAt" DESC
+    `
+  ]);
+  const entriesByCaptain = new Map<string, StatementEntry[]>();
+  for (const entry of entries) {
+    const list = entriesByCaptain.get(entry.captainId) ?? [];
+    list.push(entry);
+    entriesByCaptain.set(entry.captainId, list);
+  }
+  const openingByCaptain = new Map(openings.map((row) => [row.captainId, Number(row.balanceAfterFils)]));
+  return captains.map((captain) => ({
+    ...captain,
+    statement: buildStatement(entriesByCaptain.get(captain.id) ?? [], openingByCaptain.get(captain.id) ?? 0)
+  }));
+}
+
+function readPeriod(query: Record<string, unknown>) {
+  return statementPeriod(String(query.from ?? ""), String(query.to ?? ""));
+}
+
+router.get("/captain/statement", requireAuth("captain"), async (req, res) => {
+  const period = readPeriod(req.query);
+  if (!period) {
+    res.status(400).json({ error: "اختر تاريخ البداية والنهاية بشكل صحيح." });
+    return;
+  }
+  const [captain] = await loadStatements(period, req.user!.id);
+  if (!captain) {
+    res.status(404).json({ error: "الحساب غير موجود." });
+    return;
+  }
+  res.json({ from: req.query.from, to: req.query.to, captain });
+});
+
+router.get("/admin/statements", requireAuth("admin"), async (req, res) => {
+  const period = readPeriod(req.query);
+  if (!period) {
+    res.status(400).json({ error: "اختر تاريخ البداية والنهاية بشكل صحيح." });
+    return;
+  }
+  const captains = await loadStatements(period);
+  res.json({
+    from: req.query.from,
+    to: req.query.to,
+    captains,
+    totals: sumStatements(captains.map((captain) => ({ statement: captain.statement, balanceFils: captain.balanceFils })))
+  });
+});
+
 router.post("/admin/captains/import", requireAuth("admin"), async (req, res) => {
   try {
     const result = await importGroupCaptains();
@@ -566,7 +637,7 @@ router.post("/admin/captains/adjust", requireAuth("admin"), async (req, res) => 
         data: {
           captainId: captain.id,
           type: credit ? LedgerType.CREDIT : LedgerType.ADJUSTMENT,
-          amountFils,
+          amountFils: credit ? amountFils : -amountFils,
           balanceAfterFils: updated.balanceFils,
           description: credit ? "شحن رصيد" : "خصم رصيد"
         }

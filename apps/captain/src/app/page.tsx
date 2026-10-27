@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { CaptainStatementSheet, defaultPeriod, downloadPdf, type CaptainWithStatement } from "./statement";
 import { ArrowDownLeft, ArrowLeft, ArrowUpLeft, CarFront, Check, CircleDollarSign, Clock3, Copy, LogOut, Lock, Phone, ShieldCheck, Wallet } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
@@ -61,6 +62,36 @@ export default function CaptainHome() {
   const [showPassword, setShowPassword] = useState(false);
   const [notice, setNotice] = useState("");
   const [captainName, setCaptainName] = useState<string>("");
+  const [period, setPeriod] = useState(defaultPeriod);
+  const [statement, setStatement] = useState<{ captain: CaptainWithStatement; from: string; to: string } | null>(null);
+  const statementRef = useRef<HTMLDivElement>(null);
+
+  async function loadStatement() {
+    setBusy(true);
+    setError("");
+    try {
+      setStatement(await api<{ captain: CaptainWithStatement; from: string; to: string }>(
+        `/captain/statement?from=${period.from}&to=${period.to}`,
+        token
+      ));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تحميل كشف الحساب.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveStatementPdf() {
+    if (!statementRef.current || !statement) return;
+    setBusy(true);
+    try {
+      await downloadPdf(statementRef.current, `كشف-حساب-${statement.from}-${statement.to}.pdf`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تنزيل ملف PDF.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   useEffect(() => {
     const stored = window.localStorage.getItem("take-go-captain-token");
@@ -349,6 +380,20 @@ export default function CaptainHome() {
         <section className="stat-grid" aria-label="إحصائيات الطلبات">
           <article className="stat-card"><span className="stat-icon blue"><CarFront size={21} /></span><span className="stat-label">الأوردرات المكتملة</span><strong>{dashboard?.statistics.orders ?? 0}</strong><small>كل 5 د.أ = أوردر واحد</small></article>
           <article className="stat-card"><span className="stat-icon green"><ArrowDownLeft size={21} /></span><span className="stat-label">الركاب المكتملون</span><strong>{dashboard?.statistics.riders ?? 0}</strong><small>كل 5 د.أ = راكب واحد</small></article>
+        </section>
+        <section className="ledger-section">
+          <div className="section-heading"><div><p className="eyebrow">من تاريخ إلى تاريخ</p><h2>كشف الحساب</h2></div></div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "end", margin: "8px 0 12px" }}>
+            <label>من <input type="date" value={period.from} max={period.to} onChange={(event) => setPeriod({ ...period, from: event.target.value })} /></label>
+            <label>إلى <input type="date" value={period.to} min={period.from} onChange={(event) => setPeriod({ ...period, to: event.target.value })} /></label>
+            <button type="button" className="primary-button" disabled={busy || !period.from || !period.to} onClick={() => void loadStatement()}>عرض الكشف</button>
+            {statement && <button type="button" className="topup-button" disabled={busy} onClick={() => void saveStatementPdf()}>تنزيل PDF</button>}
+          </div>
+          {statement && (
+            <div ref={statementRef}>
+              <CaptainStatementSheet captain={statement.captain} period={{ from: statement.from, to: statement.to }} />
+            </div>
+          )}
         </section>
         <section className="ledger-section">
           <div className="section-heading"><div><p className="eyebrow">لشحن رصيدك</p><h2>طرق الدفع المتاحة</h2></div><span className="ledger-count">اضغط على الرقم لنسخه</span></div>
