@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AllStatementsSheet, defaultPeriod, downloadPdf, hasActivity, type CaptainWithStatement, type StatementTotals } from "./statement";
+import { AllStatementsSheet, NetProfitSheet, defaultPeriod, downloadPdf, hasActivity, type CaptainWithStatement, type StatementTotals } from "./statement";
 import { ArrowDownLeft, ArrowUpLeft, BadgeCheck, CircleDollarSign, KeyRound, LogOut, RefreshCw, Settings2, ShieldCheck, Trash2, UserRoundPlus, Users, Wallet } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
@@ -41,8 +41,15 @@ async function api<T>(path: string, token: string, options: RequestInit = {}): P
     ...options,
     headers: { "content-type": "application/json", authorization: `Bearer ${token}`, ...options.headers }
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error ?? "تعذر إكمال الطلب.");
+  // A proxy error or a crash returns an HTML page; Safari then reports a cryptic "expected pattern" error.
+  const body = await response.text();
+  let data: { error?: string } & Record<string, unknown>;
+  try {
+    data = body ? JSON.parse(body) : {};
+  } catch {
+    throw new Error(`خطأ من الخادم (${response.status}). حاول مرة أخرى بعد قليل.`);
+  }
+  if (!response.ok) throw new Error(data.error ?? `تعذر إكمال الطلب (${response.status}).`);
   return data as T;
 }
 
@@ -69,6 +76,7 @@ export default function AdminHome() {
   const [whatsAppLink, setWhatsAppLink] = useState<WhatsAppLink | null>(null);
   const [statementPeriod, setStatementPeriod] = useState(defaultPeriod);
   const [statements, setStatements] = useState<{ captains: CaptainWithStatement[]; totals: StatementTotals; from: string; to: string } | null>(null);
+  const [statementView, setStatementView] = useState<"captains" | "profit">("captains");
   const statementsRef = useRef<HTMLDivElement>(null);
   const transferRequest = useRef<{ fingerprint: string; requestId: string } | null>(null);
 
@@ -128,7 +136,8 @@ export default function AdminHome() {
     void api<WhatsAppLink>("/admin/whatsapp-link", token).then(setWhatsAppLink).catch(() => undefined);
   }, [token]);
 
-  async function loadStatements() {
+  async function loadStatements(view: "captains" | "profit") {
+    setStatementView(view);
     setBusy(true);
     setError("");
     try {
@@ -148,7 +157,7 @@ export default function AdminHome() {
     if (!statementsRef.current || !statements) return;
     setBusy(true);
     try {
-      await downloadPdf(statementsRef.current, `كشف-حساب-الكباتن-${statements.from}-${statements.to}.pdf`, true);
+      await downloadPdf(statementsRef.current, `${statementView === "profit" ? "net-profit" : "captains-statement"}-${statements.from}-${statements.to}.pdf`, statementView === "captains");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر تنزيل ملف PDF.");
     } finally {
@@ -685,17 +694,22 @@ export default function AdminHome() {
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "end", margin: "8px 0 12px" }}>
               <label>من <input className="search" type="date" value={statementPeriod.from} max={statementPeriod.to} onChange={(event) => setStatementPeriod({ ...statementPeriod, from: event.target.value })} /></label>
               <label>إلى <input className="search" type="date" value={statementPeriod.to} min={statementPeriod.from} onChange={(event) => setStatementPeriod({ ...statementPeriod, to: event.target.value })} /></label>
-              <button type="button" className="button primary" disabled={busy || !statementPeriod.from || !statementPeriod.to} onClick={() => void loadStatements()}>عرض كشف الكباتن</button>
+              <button type="button" className="button primary" disabled={busy || !statementPeriod.from || !statementPeriod.to} onClick={() => void loadStatements("captains")}>عرض كشف الكباتن</button>
+              <button type="button" className="button primary" disabled={busy || !statementPeriod.from || !statementPeriod.to} onClick={() => void loadStatements("profit")}>كشف صافي الربح</button>
               {statements && <button type="button" className="button ghost" disabled={busy} onClick={() => void saveStatementsPdf()}>تنزيل PDF</button>}
             </div>
             {statements && (
               <div style={{ overflowX: "auto" }}>
-                <div ref={statementsRef} style={{ minWidth: 900 }}>
-                  <AllStatementsSheet
-                    captains={statements.captains.filter(hasActivity)}
-                    totals={statements.totals}
-                    period={{ from: statements.from, to: statements.to }}
-                  />
+                <div ref={statementsRef} style={{ minWidth: statementView === "captains" ? 900 : undefined }}>
+                  {statementView === "profit" ? (
+                    <NetProfitSheet totals={statements.totals} period={{ from: statements.from, to: statements.to }} />
+                  ) : (
+                    <AllStatementsSheet
+                      captains={statements.captains.filter((captain) => captain.status === "ACTIVE" && hasActivity(captain))}
+                      totals={statements.totals}
+                      period={{ from: statements.from, to: statements.to }}
+                    />
+                  )}
                 </div>
               </div>
             )}

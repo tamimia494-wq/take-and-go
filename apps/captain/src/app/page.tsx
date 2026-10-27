@@ -28,8 +28,15 @@ async function api<T>(path: string, token: string, options: RequestInit = {}): P
     ...options,
     headers: { "content-type": "application/json", authorization: `Bearer ${token}`, ...options.headers }
   });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.error ?? "تعذر إكمال الطلب.");
+  // A proxy error or a crash returns an HTML page; Safari then reports a cryptic "expected pattern" error.
+  const body = await response.text();
+  let data: { error?: string } & Record<string, unknown>;
+  try {
+    data = body ? JSON.parse(body) : {};
+  } catch {
+    throw new Error(`خطأ من الخادم (${response.status}). حاول مرة أخرى بعد قليل.`);
+  }
+  if (!response.ok) throw new Error(data.error ?? `تعذر إكمال الطلب (${response.status}).`);
   return data as T;
 }
 
@@ -85,7 +92,7 @@ export default function CaptainHome() {
     if (!statementRef.current || !statement) return;
     setBusy(true);
     try {
-      await downloadPdf(statementRef.current, `كشف-حساب-${statement.from}-${statement.to}.pdf`);
+      await downloadPdf(statementRef.current, `statement-${statement.from}-${statement.to}.pdf`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر تنزيل ملف PDF.");
     } finally {

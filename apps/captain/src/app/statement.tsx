@@ -56,16 +56,35 @@ export function defaultPeriod(): { from: string; to: string } {
   return { from: day(new Date(today.getFullYear(), today.getMonth(), 1)), to: day(today) };
 }
 
-/** Saves a statement sheet as a PDF on the device. */
+/**
+ * Saves a statement sheet as a PDF. On phones that can share files (iPhone Safari) it opens the share sheet so the
+ * file can be saved to Files; elsewhere it downloads. The file name stays ASCII, which Safari handles reliably.
+ */
 export async function downloadPdf(element: HTMLElement, fileName: string, landscape = false): Promise<void> {
   const html2pdf = (await import("html2pdf.js")).default;
-  await html2pdf().set({
+  const blob: Blob = await html2pdf().set({
     margin: 6,
-    filename: fileName,
     image: { type: "jpeg", quality: 0.95 },
     html2canvas: { scale: 2, backgroundColor: "#ffffff" },
     jsPDF: { unit: "mm", format: "a4", orientation: landscape ? "landscape" : "portrait" }
-  }).from(element).save();
+  }).from(element).outputPdf("blob");
+  const file = new File([blob], fileName, { type: "application/pdf" });
+  if (typeof navigator.canShare === "function" && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: fileName });
+      return;
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
 const sheet: React.CSSProperties = {
@@ -105,7 +124,7 @@ function SideTable({ side }: { side: CommissionSide }) {
         <tr><td style={cell}>ركاب</td><td style={cell}>{side.riderJobs}</td><td style={cell}>{jod(side.riderFils)}</td></tr>
         <tr><td style={cell}>أوردرات</td><td style={cell}>{side.orderJobs}</td><td style={cell}>{jod(side.orderFils)}</td></tr>
         {side.transferredFils > 0 && <tr><td style={cell}>عمولات محوّلة من الإدارة</td><td style={cell}>—</td><td style={cell}>{jod(side.transferredFils)}</td></tr>}
-        {side.refundedFils > 0 && <tr><td style={cell}>مرتجع عمولات سابقة</td><td style={cell}>—</td><td style={cell}>-{jod(side.refundedFils)}</td></tr>}
+        {side.refundedFils > 0 && <tr><td style={cell}>مرتجع عمولات</td><td style={cell}>—</td><td style={cell}>-{jod(side.refundedFils)}</td></tr>}
         <tr><td style={head}>الإجمالي</td><td style={head}>{side.riderJobs + side.orderJobs}</td><td style={head}>{jod(side.totalFils)}</td></tr>
       </tbody>
     </table>
@@ -125,7 +144,6 @@ export function CaptainStatementSheet({ captain, period }: { captain: CaptainWit
       <div style={title}>الرصيد</div>
       <table style={table}>
         <tbody>
-          <tr><td style={cell}>رصيد بداية الفترة</td><td style={cell}>{jod(statement.openingBalanceFils)}</td></tr>
           <tr><td style={cell}>رصيد نهاية الفترة</td><td style={cell}>{jod(statement.closingBalanceFils)}</td></tr>
           <tr><td style={head}>الرصيد الحالي</td><td style={head}>{jod(captain.balanceFils)}</td></tr>
         </tbody>
@@ -147,6 +165,24 @@ export function CaptainStatementSheet({ captain, period }: { captain: CaptainWit
           <tr><td style={head}>إجمالي المستهلك من الرصيد</td><td style={head}>{jod(statement.spentFils)}</td></tr>
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** The admin's net profit for a period: top-ups and group floors in, withdrawals out. */
+export function NetProfitSheet({ totals, period }: { totals: StatementTotals; period: { from: string; to: string } }) {
+  return (
+    <div style={sheet}>
+      <SheetHeader heading="كشف صافي الربح" period={period} />
+      <table style={table}>
+        <tbody>
+          <tr><td style={cell}>إجمالي شحن الرصيد (+)</td><td style={cell}>{jod(totals.topUpsFils)}</td></tr>
+          <tr><td style={cell}>إجمالي أرضيات الجروب (+)</td><td style={cell}>{jod(totals.groupFloorsFils)}</td></tr>
+          <tr><td style={cell}>إجمالي سحب الرصيد (−)</td><td style={cell}>{jod(totals.withdrawalsFils)}</td></tr>
+          <tr><td style={{ ...head, background: "#fef3c7", fontSize: 16 }}>صافي الربح</td><td style={{ ...head, background: "#fef3c7", fontSize: 16 }}>{jod(totals.netProfitFils)}</td></tr>
+        </tbody>
+      </table>
+      <div style={{ fontSize: 12, color: "#4b5563" }}>صافي الربح = شحن الرصيد + أرضيات الجروب − سحب الرصيد. مكافآت التفعيل لا تدخل في الحساب.</div>
     </div>
   );
 }
@@ -213,9 +249,9 @@ export function AllStatementsSheet({ captains, totals, period }: {
   );
 }
 
-/** Whether a captain had anything in the period, or holds a balance. */
-export function hasActivity({ balanceFils, statement }: CaptainWithStatement): boolean {
-  return balanceFils !== 0 || statement.produced.totalFils !== 0 || statement.consumed.totalFils !== 0 ||
+/** Whether a captain had any movement inside the period. */
+export function hasActivity({ statement }: CaptainWithStatement): boolean {
+  return statement.produced.totalFils !== 0 || statement.consumed.totalFils !== 0 ||
     statement.topUpsFils !== 0 || statement.withdrawalsFils !== 0 || statement.groupFloorsFils !== 0 ||
     statement.bonusesFils !== 0;
 }
