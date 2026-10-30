@@ -375,57 +375,6 @@ router.get("/admin/captains", requireAuth("admin"), async (_req, res) => {
   res.json(captains.map((captain) => ({ ...captain, balanceJod: fromFils(captain.balanceFils) })));
 });
 
-router.post("/admin/captains/initial-credit", requireAuth("admin"), async (_req, res) => {
-  const credited = await prisma.$transaction(async (tx) => {
-    const candidates = await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT c.id
-      FROM "Captain" c
-      WHERE NOT EXISTS (
-        SELECT 1
-        FROM "LedgerEntry" l
-        WHERE l."captainId" = c.id
-          AND l."idempotencyKey" = 'activation-bonus:' || c.id
-      )
-      FOR UPDATE
-    `;
-
-    let count = 0;
-    for (const candidate of candidates) {
-      const idempotencyKey = `activation-bonus:${candidate.id}`;
-      const existingBonus = await tx.ledgerEntry.findUnique({ where: { idempotencyKey } });
-      if (existingBonus) continue;
-
-      const captain = await tx.captain.update({
-        where: { id: candidate.id },
-        data: { balanceFils: { increment: 1000 } }
-      });
-      await tx.ledgerEntry.create({
-        data: {
-          captainId: captain.id,
-          type: LedgerType.CREDIT,
-          amountFils: 1000,
-          balanceAfterFils: captain.balanceFils,
-          description: "رصيد تفعيل أولي لمرة واحدة",
-          idempotencyKey
-        }
-      });
-      count += 1;
-    }
-
-    return count;
-  }, { timeout: 60_000 });
-
-  res.json({ creditedAccounts: credited, amountJodPerAccount: 1 });
-});
-
-router.get("/admin/green-api/diagnose", requireAuth("admin"), async (req, res) => {
-  const configured = Boolean(config.greenApiInstanceId && config.greenApiToken && config.greenApiGroupId);
-  const result: Record<string, unknown> = {
-    configured,
-    instanceId: config.greenApiInstanceId ?? null,
-    groupId: config.greenApiGroupId ?? null
-  };
-  try {
 router.post("/admin/captains", requireAuth("admin"), async (req, res) => {
   const parsed = z.object({
     fullName: z.string().trim().min(3).max(100),
@@ -535,6 +484,57 @@ router.post("/admin/captain-account-requests/:id/review", requireAuth("admin"), 
   }
 });
 
+router.post("/admin/captains/initial-credit", requireAuth("admin"), async (_req, res) => {
+  const credited = await prisma.$transaction(async (tx) => {
+    const candidates = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT c.id
+      FROM "Captain" c
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM "LedgerEntry" l
+        WHERE l."captainId" = c.id
+          AND l."idempotencyKey" = 'activation-bonus:' || c.id
+      )
+      FOR UPDATE
+    `;
+
+    let count = 0;
+    for (const candidate of candidates) {
+      const idempotencyKey = `activation-bonus:${candidate.id}`;
+      const existingBonus = await tx.ledgerEntry.findUnique({ where: { idempotencyKey } });
+      if (existingBonus) continue;
+
+      const captain = await tx.captain.update({
+        where: { id: candidate.id },
+        data: { balanceFils: { increment: 1000 } }
+      });
+      await tx.ledgerEntry.create({
+        data: {
+          captainId: captain.id,
+          type: LedgerType.CREDIT,
+          amountFils: 1000,
+          balanceAfterFils: captain.balanceFils,
+          description: "رصيد تفعيل أولي لمرة واحدة",
+          idempotencyKey
+        }
+      });
+      count += 1;
+    }
+
+    return count;
+  }, { timeout: 60_000 });
+
+  res.json({ creditedAccounts: credited, amountJodPerAccount: 1 });
+});
+
+router.get("/admin/green-api/diagnose", requireAuth("admin"), async (req, res) => {
+  const configured = Boolean(config.greenApiInstanceId && config.greenApiToken && config.greenApiGroupId);
+  const result: Record<string, unknown> = {
+    configured,
+    instanceId: config.greenApiInstanceId ?? null,
+    groupId: config.greenApiGroupId ?? null
+  };
+  try {
     const settings = await greenApiRequest<{ stateInstance?: string; phone?: string; errorMessage?: string }>("getWaSettings");
     result.instanceState = settings.stateInstance ?? settings.errorMessage ?? "unknown";
     result.instancePhone = settings.phone ?? null;
@@ -628,7 +628,7 @@ router.post("/admin/whatsapp-link/logout", requireAuth("admin"), async (_req, re
 });
 
 /** Statements for one captain, or for all of them, over an Amman-time period. Amounts are in fils. */
-async function loadStatements(period: { start: Date; end: Date }, captainId?: string) {
+async function loadStatements(period: { start: Date; end: Date }, captainId?: string, includeEntries = false) {
   const [captains, entries, openings] = await Promise.all([
     prisma.captain.findMany({
       where: captainId ? { id: captainId } : {},
@@ -639,7 +639,7 @@ async function loadStatements(period: { start: Date; end: Date }, captainId?: st
       where: { createdAt: { gte: period.start, lt: period.end }, ...(captainId ? { captainId } : {}) },
       orderBy: { createdAt: "asc" },
       select: {
-        captainId: true, type: true, amountFils: true, balanceAfterFils: true, description: true,
+        id: true, captainId: true, type: true, amountFils: true, balanceAfterFils: true, description: true,
         reference: true, idempotencyKey: true, createdAt: true
       }
     }),
@@ -651,7 +651,7 @@ async function loadStatements(period: { start: Date; end: Date }, captainId?: st
       ORDER BY "captainId", "createdAt" DESC
     `
   ]);
-  const entriesByCaptain = new Map<string, StatementEntry[]>();
+  const entriesByCaptain = new Map<string, (StatementEntry & { id: string })[]>();
   for (const entry of entries) {
     const list = entriesByCaptain.get(entry.captainId) ?? [];
     list.push(entry);
@@ -660,7 +660,8 @@ async function loadStatements(period: { start: Date; end: Date }, captainId?: st
   const openingByCaptain = new Map(openings.map((row) => [row.captainId, Number(row.balanceAfterFils)]));
   return captains.map((captain) => ({
     ...captain,
-    statement: buildStatement(entriesByCaptain.get(captain.id) ?? [], openingByCaptain.get(captain.id) ?? 0)
+    statement: buildStatement(entriesByCaptain.get(captain.id) ?? [], openingByCaptain.get(captain.id) ?? 0),
+    ...(includeEntries ? { entries: entriesByCaptain.get(captain.id) ?? [] } : {})
   }));
 }
 
@@ -674,7 +675,7 @@ router.get("/captain/statement", requireAuth("captain"), async (req, res) => {
     res.status(400).json({ error: "اختر تاريخ البداية والنهاية بشكل صحيح." });
     return;
   }
-  const [captain] = await loadStatements(period, req.user!.id);
+  const [captain] = await loadStatements(period, req.user!.id, true);
   if (!captain) {
     res.status(404).json({ error: "الحساب غير موجود." });
     return;
@@ -688,7 +689,27 @@ router.get("/admin/statements", requireAuth("admin"), async (req, res) => {
     res.status(400).json({ error: "اختر تاريخ البداية والنهاية بشكل صحيح." });
     return;
   }
-  const captains = await loadStatements(period);
+  let captainId: string | undefined;
+  if (req.query.phone !== undefined) {
+    if (typeof req.query.phone !== "string" || !req.query.phone.trim()) {
+      res.status(400).json({ error: "أدخل رقم هاتف صحيحاً للبحث عن كشف الحساب." });
+      return;
+    }
+    let phone: string;
+    try {
+      phone = normalizePhone(req.query.phone);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "رقم الهاتف غير صالح." });
+      return;
+    }
+    const captain = await prisma.captain.findUnique({ where: { phone }, select: { id: true } });
+    if (!captain) {
+      res.status(404).json({ error: "لا يوجد حساب مسجل بهذا الرقم." });
+      return;
+    }
+    captainId = captain.id;
+  }
+  const captains = await loadStatements(period, captainId, captainId !== undefined);
   res.json({
     from: req.query.from,
     to: req.query.to,
@@ -916,7 +937,6 @@ router.post("/admin/commission-transfer", requireAuth("admin"), async (req, res)
         return { error: "لم يتم العثور على حساب المستهلك أو المنتج.", status: 404 as const };
       }
 
-      // An admin transfer is taken whatever the consumer's balance, even below zero.
       const debit = await tx.captain.updateMany({
         where: { id: consumer.id, balanceFils: { gte: amountFils } },
         data: { balanceFils: { decrement: amountFils } }
@@ -993,7 +1013,7 @@ router.put("/admin/settings", requireAuth("admin"), async (req, res) => {
   const parsed = z.object({
     groupFloorJod: z.union([z.string(), z.number()]),
     riderCommissionPerFiveJod: z.union([z.string(), z.number()]),
-    orderCommissionPerFiveJod: z.union([z.string(), z.number()]),
+    orderCommissionPerFiveJod: z.union([z.string(), z.number()])
   }).safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "أدخل القيم المالية المطلوبة." });
@@ -1011,7 +1031,7 @@ router.put("/admin/settings", requireAuth("admin"), async (req, res) => {
       update: {
         groupFloorFils: toFils(parsed.data.groupFloorJod),
         riderCommissionPerFiveFils: toFils(parsed.data.riderCommissionPerFiveJod),
-        orderCommissionPerFiveFils: toFils(parsed.data.orderCommissionPerFiveJod),
+        orderCommissionPerFiveFils: toFils(parsed.data.orderCommissionPerFiveJod)
       }
     });
     res.json({

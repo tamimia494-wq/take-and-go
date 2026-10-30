@@ -25,6 +25,17 @@ export type Statement = {
   spentFils: number;
 };
 
+export type StatementTransaction = {
+  id: string;
+  type: string;
+  amountFils: number;
+  balanceAfterFils: number;
+  description: string;
+  reference: string | null;
+  idempotencyKey: string | null;
+  createdAt: string;
+};
+
 export type CaptainWithStatement = {
   id: string;
   phone: string;
@@ -32,6 +43,7 @@ export type CaptainWithStatement = {
   status: string;
   balanceFils: number;
   statement: Statement;
+  entries?: StatementTransaction[];
 };
 
 export type StatementTotals = {
@@ -147,6 +159,29 @@ function SideTable({ side }: { side: CommissionSide }) {
   );
 }
 
+function transactionAmount(entry: StatementTransaction): number {
+  // Older manual withdrawals were recorded as positive amounts despite reducing the balance.
+  return entry.type === "ADJUSTMENT" && entry.description === "خصم رصيد"
+    ? -Math.abs(entry.amountFils)
+    : entry.amountFils;
+}
+
+function transactionLabel(entry: StatementTransaction): string {
+  if (entry.type === "CREDIT" && entry.idempotencyKey?.startsWith("activation-bonus:")) return "مكافأة تفعيل";
+  if (entry.type === "CREDIT") return "شحن رصيد";
+  if (entry.type === "RIDER_COMMISSION") return entry.amountFils < 0 ? "استهلاك ركاب" : "إنتاج ركاب";
+  if (entry.type === "ORDER_COMMISSION") return entry.amountFils < 0 ? "استهلاك أوردرات" : "إنتاج أوردرات";
+  if (entry.type === "GROUP_FLOOR") return "استهلاك · أرضية الجروب";
+  if (entry.type === "ADJUSTMENT" && entry.description === "خصم رصيد") return "سحب رصيد";
+  if (entry.type === "ADJUSTMENT" && entry.reference?.startsWith("commission-transfer:")) {
+    return entry.amountFils < 0 ? "استهلاك · تحويل عمولة" : "إنتاج · تحويل عمولة";
+  }
+  if (entry.type === "ADJUSTMENT" && entry.reference) {
+    return entry.amountFils < 0 ? "استهلاك · تعديل/عكس عمولة" : "إنتاج · إرجاع/تعديل عمولة";
+  }
+  return entry.description || "تعديل رصيد";
+}
+
 /** One captain's statement. */
 export function CaptainStatementSheet({ captain, period }: { captain: CaptainWithStatement; period: { from: string; to: string } }) {
   const { statement } = captain;
@@ -160,6 +195,7 @@ export function CaptainStatementSheet({ captain, period }: { captain: CaptainWit
       <div style={title}>الرصيد</div>
       <table style={table}>
         <tbody>
+          <tr><td style={cell}>رصيد بداية الفترة</td><td style={cell}>{jod(statement.openingBalanceFils)}</td></tr>
           <tr><td style={cell}>رصيد نهاية الفترة</td><td style={cell}>{jod(statement.closingBalanceFils)}</td></tr>
           <tr><td style={head}>الرصيد الحالي</td><td style={head}>{jod(captain.balanceFils)}</td></tr>
         </tbody>
@@ -179,6 +215,28 @@ export function CaptainStatementSheet({ captain, period }: { captain: CaptainWit
           <tr><td style={cell}>سحب رصيد</td><td style={cell}>{jod(statement.withdrawalsFils)}</td></tr>
           <tr><td style={cell}>أرضية الجروب</td><td style={cell}>{jod(statement.groupFloorsFils)}</td></tr>
           <tr><td style={head}>إجمالي المستهلك من الرصيد</td><td style={head}>{jod(statement.spentFils)}</td></tr>
+        </tbody>
+      </table>
+
+      <div style={title}>تفاصيل الحركات ({captain.entries?.length ?? 0})</div>
+      <table style={table}>
+        <thead>
+          <tr><th style={head}>التاريخ</th><th style={head}>نوع الحركة</th><th style={head}>التفاصيل</th><th style={head}>المبلغ</th><th style={head}>الرصيد بعد الحركة</th></tr>
+        </thead>
+        <tbody>
+          {captain.entries?.map((entry) => {
+            const amount = transactionAmount(entry);
+            return (
+              <tr key={entry.id}>
+                <td style={cell}>{new Intl.DateTimeFormat("ar-JO", { dateStyle: "short", timeStyle: "short" }).format(new Date(entry.createdAt))}</td>
+                <td style={cell}>{transactionLabel(entry)}</td>
+                <td style={cell}>{entry.description}</td>
+                <td style={{ ...cell, color: amount < 0 ? "#b42318" : "#137333", fontWeight: 700 }}>{jod(amount)}</td>
+                <td style={cell}>{jod(entry.balanceAfterFils)}</td>
+              </tr>
+            );
+          })}
+          {!captain.entries?.length && <tr><td style={cell} colSpan={5}>لا توجد حركات في هذه الفترة.</td></tr>}
         </tbody>
       </table>
     </div>

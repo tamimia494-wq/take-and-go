@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AllStatementsSheet, NetProfitSheet, dateInputStyle, dateLabelStyle, defaultPeriod, downloadPdf, hasActivity, type CaptainWithStatement, type StatementTotals } from "./statement";
+import { AllStatementsSheet, CaptainStatementSheet, NetProfitSheet, dateInputStyle, dateLabelStyle, defaultPeriod, downloadPdf, hasActivity, type CaptainWithStatement, type StatementTotals } from "./statement";
 import { ArrowDownLeft, ArrowUpLeft, BadgeCheck, CircleDollarSign, KeyRound, LogOut, RefreshCw, Settings2, ShieldCheck, Trash2, UserRoundPlus, Users, Wallet } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
@@ -71,14 +71,16 @@ export default function AdminHome() {
   const [showPassword, setShowPassword] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [topUps, setTopUps] = useState<TopUpRequest[]>([]);
-  const [receiptPreview, setReceiptPreview] = useState<{ id: string; url: string } | null>(null);
   const [accountRequests, setAccountRequests] = useState<CaptainAccountRequest[]>([]);
+  const [receiptPreview, setReceiptPreview] = useState<{ id: string; url: string } | null>(null);
   const [commissionAudit, setCommissionAudit] = useState<CommissionAudit | null>(null);
   const [diagnosePhone, setDiagnosePhone] = useState("");
   const [whatsAppLink, setWhatsAppLink] = useState<WhatsAppLink | null>(null);
   const [statementPeriod, setStatementPeriod] = useState(defaultPeriod);
   const [statements, setStatements] = useState<{ captains: CaptainWithStatement[]; totals: StatementTotals; from: string; to: string } | null>(null);
   const [statementView, setStatementView] = useState<"captains" | "profit">("captains");
+  const [statementPhone, setStatementPhone] = useState("");
+  const [searchedStatementPhone, setSearchedStatementPhone] = useState("");
   const statementsRef = useRef<HTMLDivElement>(null);
   const transferRequest = useRef<{ fingerprint: string; requestId: string } | null>(null);
 
@@ -95,12 +97,12 @@ export default function AdminHome() {
     setCaptains(list);
     setPaymentMethods(methods);
     setTopUps(topUpList);
+    setAccountRequests(requestList);
   }, []);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("take-go-admin-token");
     if (stored) {
-    setAccountRequests(requestList);
       setToken(stored);
       void refresh(stored).catch((reason: unknown) => {
         window.localStorage.removeItem("take-go-admin-token");
@@ -118,15 +120,15 @@ export default function AdminHome() {
       void api<TopUpRequest[]>("/admin/topups", token)
         .then(setTopUps)
         .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "تعذر تحديث طلبات الشحن."));
+      void api<CaptainAccountRequest[]>("/admin/captain-account-requests", token)
+        .then(setAccountRequests)
+        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "تعذر تحديث طلبات الحسابات."));
     }, 15000);
     return () => window.clearInterval(interval);
   }, [token]);
 
   useEffect(() => () => {
     if (receiptPreview) URL.revokeObjectURL(receiptPreview.url);
-      void api<CaptainAccountRequest[]>("/admin/captain-account-requests", token)
-        .then(setAccountRequests)
-        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "تعذر تحديث طلبات الحسابات."));
   }, [receiptPreview]);
 
   // Poll the WhatsApp link while it waits for the QR scan or connects, so the QR stays current.
@@ -143,17 +145,22 @@ export default function AdminHome() {
     void api<WhatsAppLink>("/admin/whatsapp-link", token).then(setWhatsAppLink).catch(() => undefined);
   }, [token]);
 
-  async function loadStatements(view: "captains" | "profit") {
+  async function loadStatements(view: "captains" | "profit", phone?: string) {
     setStatementView(view);
+    setSearchedStatementPhone(phone ?? "");
     setBusy(true);
     setError("");
+    if (phone) setStatements(null);
     try {
+      const params = new URLSearchParams({ from: statementPeriod.from, to: statementPeriod.to });
+      if (phone) params.set("phone", phone.trim());
       setStatements(await api<{ captains: CaptainWithStatement[]; totals: StatementTotals; from: string; to: string }>(
-        `/admin/statements?from=${statementPeriod.from}&to=${statementPeriod.to}`,
+        `/admin/statements?${params.toString()}`,
         token,
         { signal: AbortSignal.timeout(30000) }
       ));
     } catch (reason) {
+      if (phone) setStatements(null);
       setError(reason instanceof Error ? reason.message : "تعذر تحميل كشف الحساب.");
     } finally {
       setBusy(false);
@@ -164,7 +171,11 @@ export default function AdminHome() {
     if (!statementsRef.current || !statements) return;
     setBusy(true);
     try {
-      await downloadPdf(statementsRef.current, `${statementView === "profit" ? "net-profit" : "captains-statement"}-${statements.from}-${statements.to}.pdf`, statementView === "captains");
+      const captainPhone = searchedStatementPhone ? statements.captains[0]?.phone : undefined;
+      const fileName = captainPhone
+        ? `captain-statement-${captainPhone}-${statements.from}-${statements.to}.pdf`
+        : `${statementView === "profit" ? "net-profit" : "captains-statement"}-${statements.from}-${statements.to}.pdf`;
+      await downloadPdf(statementsRef.current, fileName, statementView === "captains" && !captainPhone);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر تنزيل ملف PDF.");
     } finally {
@@ -284,8 +295,16 @@ export default function AdminHome() {
       const webhookErrors = Array.isArray(result.latestWebhookErrors) ? result.latestWebhookErrors as Array<{ lastError: string }> : [];
       if (webhookErrors.length) lines.push(`⚠️ آخر أخطاء المعالجة: ${webhookErrors.map((item) => item.lastError).join(" ؛ ")}`);
       lines.push(result.socket === "connected"
-        ? "🔗 الربط المباشر متصل: الحذف يمر عبره بدون Green API."
-        : "🔗 الربط المباشر غير متصل: الحذف يمر عبر Green API.");
+        ? "🔗 الربط المباشر متصل وجاهز للحذف عبر Baileys عند معرفة مرسل الرسالة."
+        : "🔗 الربط المباشر غير متصل.");
+      const lastDeletion = result.lastDeletion as { at?: string; transport?: string; error?: string | null } | null;
+      if (lastDeletion) {
+        const transportName = lastDeletion.transport === "baileys" ? "Baileys المباشر"
+          : lastDeletion.transport === "green-api" ? "Green API" : "فشل";
+        lines.push(`🗑️ آخر محاولة حذف: ${transportName} (${new Date(lastDeletion.at ?? "").toLocaleTimeString("ar-JO")})${lastDeletion.error ? ` — ${lastDeletion.error}` : ""}.`);
+      } else {
+        lines.push("⏳ لم تُسجل محاولة حذف منذ آخر تشغيل.");
+      }
       const sweep = result.lastSweep as { at: string; deleted: number; unresolvedSenders: number; error: string | null } | null;
       lines.push(sweep
         ? sweep.error ? `❌ آخر فحص حذف فشل: ${sweep.error}` : `🧹 آخر فحص حذف: ${new Date(sweep.at).toLocaleTimeString("ar-JO")} وحذف ${sweep.deleted} رسالة.`
@@ -319,54 +338,6 @@ export default function AdminHome() {
       await refresh(token);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذرت مزامنة المشاركين.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function lookupPhone(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setError("");
-    setNotice("");
-    setAdjustCaptain(null);
-    const form = new FormData(event.currentTarget);
-    const raw = String(form.get("phone") ?? "").replace(/\D/g, "");
-    const last9 = raw.slice(-9);
-    const found = captains.find((captain) => captain.phone.replace(/\D/g, "").endsWith(last9) && last9.length >= 9);
-    if (!found) {
-      setError("لا يوجد كابتن بهذا الرقم. تأكد من الرقم أو اعمل مزامنة للمجموعة أولاً.");
-      return;
-    }
-    setAdjustCaptain(found);
-  }
-
-  async function adjustBalance(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!adjustCaptain) return;
-    if (adjustAction === "debit_all" &&
-        !window.confirm(`تأكيد سحب كامل الرصيد (${money(adjustCaptain.balanceJod)} د.أ)؟`)) return;
-    setBusy(true);
-    setError("");
-    const form = new FormData(event.currentTarget);
-    try {
-      const result = await api<{ fullName: string | null; phone: string; amountJod: number; balanceJod: number }>("/admin/captains/adjust", token, {
-        method: "POST",
-        body: JSON.stringify({
-          phone: adjustCaptain.phone,
-          ...(adjustAction === "debit_all" ? {} : { amount: form.get("amount") }),
-          action: adjustAction,
-          description: adjustAction === "credit" ? "شحن رصيد" : adjustAction === "debit_all" ? "سحب كامل الرصيد" : "خصم رصيد"
-        })
-      });
-      setNotice(adjustAction === "debit_all"
-        ? `تم سحب مبلغ ${money(result.amountJod)} د.أ من حساب ${result.fullName ?? result.phone}. الرصيد المتبقي: ${money(result.balanceJod)} د.أ.`
-        : `${adjustAction === "credit" ? "تم شحن" : "تم خصم"} ${money(result.amountJod)} د.أ ${adjustAction === "credit" ? "على" : "من"} حساب ${result.fullName ?? result.phone}. الرصيد الجديد: ${money(result.balanceJod)} د.أ`);
-      setAdjustCaptain(null);
-      setAdjustOpen(false);
-      setAdjustAction("credit");
-      await refresh(token);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر تنفيذ العملية.");
     } finally {
       setBusy(false);
     }
@@ -415,23 +386,46 @@ export default function AdminHome() {
     }
   }
 
+  function lookupPhone(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError("");
+    setNotice("");
+    setAdjustCaptain(null);
+    const form = new FormData(event.currentTarget);
+    const raw = String(form.get("phone") ?? "").replace(/\D/g, "");
+    const last9 = raw.slice(-9);
+    const found = captains.find((captain) => captain.phone.replace(/\D/g, "").endsWith(last9) && last9.length >= 9);
+    if (!found) {
+      setError("لا يوجد كابتن بهذا الرقم. تأكد من الرقم أو اعمل مزامنة للمجموعة أولاً.");
+      return;
+    }
+    setAdjustCaptain(found);
+  }
+
+  async function adjustBalance(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
     if (!adjustCaptain) return;
+    if (adjustAction === "debit_all" &&
+        !window.confirm(`تأكيد سحب كامل الرصيد (${money(adjustCaptain.balanceJod)} د.أ)؟`)) return;
     setBusy(true);
     setError("");
     const form = new FormData(event.currentTarget);
     try {
-      const result = await api<{ fullName: string | null; phone: string; balanceJod: number }>("/admin/captains/adjust", token, {
+      const result = await api<{ fullName: string | null; phone: string; amountJod: number; balanceJod: number }>("/admin/captains/adjust", token, {
         method: "POST",
         body: JSON.stringify({
           phone: adjustCaptain.phone,
-          amount: form.get("amount"),
+          ...(adjustAction === "debit_all" ? {} : { amount: form.get("amount") }),
           action: adjustAction,
-          description: adjustAction === "credit" ? "شحن رصيد" : "خصم رصيد"
+          description: adjustAction === "credit" ? "شحن رصيد" : adjustAction === "debit_all" ? "سحب كامل الرصيد" : "خصم رصيد"
         })
       });
-      setNotice(`${adjustAction === "credit" ? "تم شحن" : "تم خصم"} ${money(Number(form.get("amount")))} د.أ ${adjustAction === "credit" ? "على" : "من"} حساب ${result.fullName ?? result.phone}. الرصيد الجديد: ${money(result.balanceJod)} د.أ`);
+      setNotice(adjustAction === "debit_all"
+        ? `تم سحب مبلغ ${money(result.amountJod)} د.أ من حساب ${result.fullName ?? result.phone}. الرصيد المتبقي: ${money(result.balanceJod)} د.أ.`
+        : `${adjustAction === "credit" ? "تم شحن" : "تم خصم"} ${money(result.amountJod)} د.أ ${adjustAction === "credit" ? "على" : "من"} حساب ${result.fullName ?? result.phone}. الرصيد الجديد: ${money(result.balanceJod)} د.أ`);
       setAdjustCaptain(null);
       setAdjustOpen(false);
+      setAdjustAction("credit");
       await refresh(token);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر تنفيذ العملية.");
@@ -795,46 +789,25 @@ export default function AdminHome() {
             <p className="hint">يشترط وجود الحسابين وتوفر رصيد كافٍ لدى المستهلك؛ لا يمكن أن يصبح رصيد أي حساب سالباً. تُسجل حركتا الخصم والإضافة في سجل الحسابين.</p>
           </article>
           <article className="panel" style={{ gridColumn: "1 / -1" }}>
-        <section className="admin-grid">
-          <article className="panel">
-            <div className="panel-heading"><span className="panel-icon blue"><UserRoundPlus size={19} /></span><div><h2>إنشاء حساب كابتن</h2><p>أنشئ حساباً مباشرة باستخدام الاسم ورقم الهاتف.</p></div></div>
-            <form className="commission-transfer-form" onSubmit={createCaptain}>
-              <label>اسم الكابتن<input name="fullName" type="text" autoComplete="name" minLength={3} maxLength={100} required /></label>
-              <label>رقم الهاتف<input name="phone" type="tel" inputMode="tel" autoComplete="tel" dir="ltr" minLength={8} maxLength={24} placeholder="079xxxxxxx" required /></label>
-              <button className="button primary" disabled={busy}><UserRoundPlus size={16} /> إنشاء الحساب</button>
-            </form>
-            <p className="hint">كلمة المرور الأولية للحساب الجديد هي <bdi>123456</bdi>، ويُنصح بتغييرها فور تسجيل الدخول.</p>
-          </article>
-          <article className="panel">
-            <div className="panel-heading"><span className="panel-icon"><Users size={19} /></span><div><h2>طلبات إنشاء الحسابات</h2><p>تصل طلبات الكباتن هنا، وتتحدث القائمة تلقائياً.</p></div></div>
-            {accountRequests.length ? accountRequests.map((request) => (
-              <div key={request.id} style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid var(--line)" }}>
-                <div>
-                  <strong>{request.fullName}</strong>
-                  <div dir="ltr" style={{ textAlign: "right", marginTop: 4 }}><bdi>{request.phone}</bdi></div>
-                  <small className="hint">{new Date(request.createdAt).toLocaleString("ar-JO")}</small>
-                </div>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <button className="button primary" disabled={busy} onClick={() => void reviewCaptainAccountRequest(request.id, "approve")}>موافقة وإنشاء الحساب</button>
-                  <button className="button ghost" disabled={busy} onClick={() => void reviewCaptainAccountRequest(request.id, "reject")}>رفض</button>
-                </div>
-              </div>
-            )) : <p className="hint">لا توجد طلبات إنشاء حساب معلقة حالياً.</p>}
-          </article>
-        </section>
             <div className="panel-heading"><span className="panel-icon"><Wallet size={19} /></span><div><h2>كشف حساب الكباتن</h2><p>الإنتاج والاستهلاك والشحن والسحب والأرضيات وصافي الربح لكل الكباتن بكبسة وحدة</p></div></div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "end", margin: "8px 0 12px" }}>
               <label style={dateLabelStyle}>من <input style={dateInputStyle} type="date" value={statementPeriod.from} max={statementPeriod.to} onChange={(event) => setStatementPeriod({ ...statementPeriod, from: event.target.value })} /></label>
               <label style={dateLabelStyle}>إلى <input style={dateInputStyle} type="date" value={statementPeriod.to} min={statementPeriod.from} onChange={(event) => setStatementPeriod({ ...statementPeriod, to: event.target.value })} /></label>
               <button type="button" className="button primary" disabled={busy || !statementPeriod.from || !statementPeriod.to} onClick={() => void loadStatements("captains")}>عرض كشف الكباتن</button>
               <button type="button" className="button primary" disabled={busy || !statementPeriod.from || !statementPeriod.to} onClick={() => void loadStatements("profit")}>كشف صافي الربح</button>
+              <label style={dateLabelStyle}>كشف حساب برقم الهاتف <input style={dateInputStyle} type="tel" inputMode="tel" dir="ltr" value={statementPhone} onChange={(event) => setStatementPhone(event.target.value)} placeholder="079xxxxxxx" /></label>
+              <button type="button" className="button primary" disabled={busy || !statementPeriod.from || !statementPeriod.to || !statementPhone.trim()} onClick={() => void loadStatements("captains", statementPhone)}>بحث عن كشف الحساب</button>
               {statements && <button type="button" className="button ghost" disabled={busy} onClick={() => void saveStatementsPdf()}>تنزيل PDF</button>}
             </div>
             {statements && (
               <div style={{ overflowX: "auto" }}>
-                <div ref={statementsRef} style={{ minWidth: statementView === "captains" ? 900 : undefined }}>
+                <div ref={statementsRef} style={{ minWidth: statementView === "captains" && !searchedStatementPhone ? 900 : undefined }}>
                   {statementView === "profit" ? (
                     <NetProfitSheet totals={statements.totals} period={{ from: statements.from, to: statements.to }} />
+                  ) : searchedStatementPhone ? (
+                    statements.captains[0] ? (
+                      <CaptainStatementSheet captain={statements.captains[0]} period={{ from: statements.from, to: statements.to }} />
+                    ) : <div className="empty">لا يوجد حساب مسجل بهذا الرقم.</div>
                   ) : (
                     <AllStatementsSheet
                       captains={statements.captains.filter((captain) => captain.status === "ACTIVE" && hasActivity(captain))}
