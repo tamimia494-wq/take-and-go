@@ -53,8 +53,8 @@ export function onSocketGroupMessage(handler: (webhook: IncomingWebhook) => Prom
 }
 
 /** The sender of a group message is needed to delete it for everyone. */
-export function rememberMessageParticipant(messageId: string, senderId: string): void {
-  if (!messageId || !senderId || participantByMessageId.has(messageId)) return;
+export function rememberMessageParticipant(messageId: string, senderId: string, overwrite = false): void {
+  if (!messageId || !senderId || (!overwrite && participantByMessageId.has(messageId))) return;
   participantByMessageId.set(messageId, senderId.replace(/@c\.us$/, "@s.whatsapp.net"));
   if (participantByMessageId.size > 10_000) {
     const oldest = participantByMessageId.keys().next().value;
@@ -199,7 +199,8 @@ function toIncomingWebhook(lib: Baileys, message: WAMessage): IncomingWebhook | 
   const rawParticipant = key.participant ?? "";
   const sender = key.participantPn ?? rawParticipant;
   if (!sender) return null;
-  rememberMessageParticipant(key.id, rawParticipant || sender);
+  // WhatsApp's own key beats the id Green API reports, which may be a phone number in a LID-addressed group.
+  rememberMessageParticipant(key.id, rawParticipant || sender, true);
 
   const content = lib.normalizeMessageContent(message.message);
   if (!content || content.protocolMessage) return null;

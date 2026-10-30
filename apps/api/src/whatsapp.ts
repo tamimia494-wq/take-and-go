@@ -312,6 +312,25 @@ function journalQuotedId(entry: Record<string, unknown>): string | undefined {
     stringValue(objectValue(entry.extendedTextMessage)?.stanzaId);
 }
 
+/** Finds the order a reply quotes, reading it from WhatsApp and recording it when the system never stored it. */
+async function findOrRecoverJob(groupId: string, sourceMessageId: string) {
+  const job = await prisma.whatsAppJob.findUnique({ where: { groupId_sourceMessageId: { groupId, sourceMessageId } } });
+  if (job) return job;
+  try {
+    const order = await fetchGroupMessage(sourceMessageId);
+    const orderText = journalText(order);
+    const orderSenderId = stringValue(order.senderId) ?? "";
+    const orderSender = phoneFromChatId(orderSenderId) ?? (orderSenderId ? await resolveGroupSenderPhone(orderSenderId) : null);
+    if (orderText && orderSender) {
+      const timestamp = Number(order.timestamp ?? 0);
+      await recordJobFromMessage(groupId, sourceMessageId, orderSender, orderText, timestamp ? new Date(timestamp * 1000) : undefined);
+    }
+  } catch (error) {
+    console.warn(`Could not fetch order ${sourceMessageId}:`, error);
+  }
+  return prisma.whatsAppJob.findUnique({ where: { groupId_sourceMessageId: { groupId, sourceMessageId } } });
+}
+
 /**
  * Records a reply the owner liked but the system never stored, together with the order it answers when that is
  * missing too, by reading both messages from WhatsApp.
@@ -331,22 +350,7 @@ async function recordMissedReply(replyMessageId: string): Promise<void> {
   const replySender = phoneFromChatId(replySenderId) ?? (replySenderId ? await resolveGroupSenderPhone(replySenderId) : null);
   if (!sourceMessageId || !replySender) return;
 
-  let job = await prisma.whatsAppJob.findUnique({ where: { groupId_sourceMessageId: { groupId, sourceMessageId } } });
-  if (!job) {
-    try {
-      const order = await fetchGroupMessage(sourceMessageId);
-      const orderText = journalText(order);
-      const orderSenderId = stringValue(order.senderId) ?? "";
-      const orderSender = phoneFromChatId(orderSenderId) ?? (orderSenderId ? await resolveGroupSenderPhone(orderSenderId) : null);
-      if (orderText && orderSender) {
-        const timestamp = Number(order.timestamp ?? 0);
-        await recordJobFromMessage(groupId, sourceMessageId, orderSender, orderText, timestamp ? new Date(timestamp * 1000) : undefined);
-      }
-    } catch (error) {
-      console.warn(`Could not fetch order ${sourceMessageId} for liked reply ${replyMessageId}:`, error);
-    }
-    job = await prisma.whatsAppJob.findUnique({ where: { groupId_sourceMessageId: { groupId, sourceMessageId } } });
-  }
+  const job = await findOrRecoverJob(groupId, sourceMessageId);
   if (!job) return;
 
   const captain = await prisma.captain.findUnique({ where: { phone: replySender }, select: { id: true } });
@@ -593,21 +597,21 @@ async function sweepUnauthorizedMessagesOnce(count: number): Promise<{ deleted: 
         select: { commissionFils: true }
       })
       : null;
-    if (!quotedJob) continue;
+    if (!quotedJob && !(quotedId && isConfirmation(journalText(entry) ?? ""))) continue;
     const storedReply = await prisma.whatsAppReply.findUnique({ where: { messageId }, select: { status: true } });
     if (storedReply?.status === "CHARGED") continue;
-    const requiredFils = Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, quotedJob.commissionFils);
+    const requiredFils = Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, quotedJob?.commissionFils ?? 0);
     const unauthorized = !captain || captain.status !== "ACTIVE" ||
       await wasBelowMinimumBalance(captain, new Date(timestamp * 1000), requiredFils);
     if (!unauthorized) continue;
     try {
       await deleteGroupMessage(messageId);
       deleted += 1;
+      sweptMessageIds.add(messageId);
     } catch (error) {
       console.warn(`Sweep could not delete message ${messageId}:`, error);
       rememberDeletionIssue(messageId, error);
     }
-    sweptMessageIds.add(messageId);
   }
   if (sweptMessageIds.size > 5000) sweptMessageIds.clear();
   return { deleted, unresolvedSenders };
@@ -663,8 +667,11 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   const text = messageText(data);
   const sourceMessageId = quotedMessageId(data);
   // Any reply to an order counts, whatever it says; the owner's 👍 on it is what charges the commission.
+  const isConfirmationReply = Boolean(sourceMessageId && text && isConfirmation(text));
   const quotedJob = sourceMessageId
-    ? await prisma.whatsAppJob.findUnique({ where: { groupId_sourceMessageId: { groupId, sourceMessageId } } })
+    ? isConfirmationReply
+      ? await findOrRecoverJob(groupId, sourceMessageId)
+      : await prisma.whatsAppJob.findUnique({ where: { groupId_sourceMessageId: { groupId, sourceMessageId } } })
     : null;
   const isCaptainConfirmation = Boolean(quotedJob);
   // Admin numbers are never deleted or balance-checked, but an admin who also has a captain account still posts
@@ -677,7 +684,21 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   }
   // Anyone may post an order or chat; only a reply to an order needs an active account and enough balance.
   if (!text && !quotedJob) return;
-  if (sourceMessageId && !quotedJob && text && isConfirmation(text)) {
+  if (isConfirmationReply && !quotedJob) {
+    // The order's commission is unknown, so only the minimum balance can be checked; it must not wait for the order.
+    const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
+    if (!excludedAdmin && (!captain || captain.status !== "ACTIVE" || captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS)) {
+      console.warn(`Deleting confirmation ${messageId}: sender cannot take orders, balance=${captain?.balanceFils ?? "unknown"} fils.`);
+      await deleteRejectedReplyMessage(messageId);
+      await notifyDeletion(
+        webhook,
+        senderPhone,
+        !captain || captain.status !== "ACTIVE"
+          ? "رقمك غير مسجل في Take & Go أو حسابك غير مفعل. تواصل مع الإدارة لتفعيل حسابك."
+          : `ردّك انحذف لأن رصيدك ${formatJod(captain.balanceFils)} د.أ لا يغطي عمولة الطلب. اشحن رصيدك لتتمكن من أخذ الطلبات.`
+      );
+      return;
+    }
     throw new Error(`Source job ${sourceMessageId} for confirmation ${messageId} is not available yet.`);
   }
 
