@@ -14,6 +14,15 @@ export class GreenApiRequestError extends Error {
 
 const GROUP_SENDER_CACHE_TTL_MS = 5 * 60 * 1000;
 const groupSenderCache = new Map<string, { expiresAt: number; phonesById: Map<string, string> }>();
+let lastDeletion: {
+  at: string;
+  transport: "baileys" | "green-api" | "failed";
+  error: string | null;
+} | null = null;
+
+export function getLastDeletionStatus(): typeof lastDeletion {
+  return lastDeletion;
+}
 
 function requireGreenApiConfig(): { instanceId: string; token: string; groupId: string } {
   const { greenApiInstanceId, greenApiToken, greenApiGroupId } = config;
@@ -80,13 +89,34 @@ export async function sendPrivateMessage(phone: string, message: string): Promis
 }
 
 export async function deleteGroupMessage(messageId: string): Promise<void> {
-  // The linked WhatsApp socket deletes without Green API's plan limits whenever it knows the sender.
-  if (isSocketConnected() && await deleteViaSocket(messageId)) return;
-  const { groupId } = requireGreenApiConfig();
-  await greenApiRequest("deleteMessage", {
-    chatId: groupId,
-    idMessage: messageId
-  });
+  let socketError: unknown;
+  if (isSocketConnected()) {
+    try {
+      if (await deleteViaSocket(messageId)) {
+        lastDeletion = { at: new Date().toISOString(), transport: "baileys", error: null };
+        return;
+      }
+    } catch (error) {
+      socketError = error;
+    }
+  }
+  try {
+    const { groupId } = requireGreenApiConfig();
+    await greenApiRequest("deleteMessage", {
+      chatId: groupId,
+      idMessage: messageId
+    });
+    lastDeletion = { at: new Date().toISOString(), transport: "green-api", error: null };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const socketMessage = socketError instanceof Error ? socketError.message : socketError ? String(socketError) : null;
+    lastDeletion = {
+      at: new Date().toISOString(),
+      transport: "failed",
+      error: socketMessage ? `Baileys: ${socketMessage}; Green API: ${message}` : message
+    };
+    throw error;
+  }
 }
 
 export async function getGroupParticipants(): Promise<string[]> {

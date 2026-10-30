@@ -102,7 +102,6 @@ model AppSettings {
   groupFloorFils           Int      @default(0)
   riderCommissionPerFiveFils Int     @default(750)
   orderCommissionPerFiveFils Int    @default(1000)
-  allowNegativeCommission  Boolean  @default(true)
   updatedAt                DateTime @updatedAt
 }
 

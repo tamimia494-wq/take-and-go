@@ -3,6 +3,8 @@ import test from "node:test";
 import { hasSufficientCaptainReplyBalance, normalizePhone, phoneFromChatId } from "../src/money";
 
 test("requires at least 0.75 JOD in addition to enough balance for the commission", () => {
+  assert.equal(hasSufficientCaptainReplyBalance(-1, 0), false);
+  assert.equal(hasSufficientCaptainReplyBalance(-750, 500), false);
   assert.equal(hasSufficientCaptainReplyBalance(749, 500), false);
   assert.equal(hasSufficientCaptainReplyBalance(750, 500), true);
   assert.equal(hasSufficientCaptainReplyBalance(999, 1000), false);

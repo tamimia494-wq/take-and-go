@@ -11,7 +11,7 @@ import { fromFils, MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, normalizePhone, phoneFrom
 import { getDeletionStatus, importGroupCaptains, isExcludedPhone } from "./whatsapp";
 import { getSocketState, logoutWhatsAppSocket, startWhatsAppSocket } from "./whatsapp-socket";
 import QRCode from "qrcode";
-import { greenApiRequest } from "./green-api";
+import { getLastDeletionStatus, greenApiRequest } from "./green-api";
 import { config } from "./config";
 
 export const router = Router();
@@ -211,8 +211,7 @@ router.get("/admin/dashboard", requireAuth("admin"), async (_req, res) => {
     settings: {
       groupFloorJod: fromFils(settings.groupFloorFils),
       riderCommissionPerFiveJod: fromFils(settings.riderCommissionPerFiveFils),
-      orderCommissionPerFiveJod: fromFils(settings.orderCommissionPerFiveFils),
-      allowNegativeCommission: settings.allowNegativeCommission
+      orderCommissionPerFiveJod: fromFils(settings.orderCommissionPerFiveFils)
     },
     latestActivity: latest.map((entry) => ({
       ...entry,
@@ -426,10 +425,6 @@ router.get("/admin/green-api/diagnose", requireAuth("admin"), async (req, res) =
     instanceId: config.greenApiInstanceId ?? null,
     groupId: config.greenApiGroupId ?? null
   };
-  if (!configured) {
-    res.status(400).json({ error: "متغيرات Green API غير مضبوطة على الخادم (Instance ID / Token / Group ID).", ...result });
-    return;
-  }
   try {
 router.post("/admin/captains", requireAuth("admin"), async (req, res) => {
   const parsed = z.object({
@@ -586,6 +581,7 @@ router.post("/admin/captain-account-requests/:id/review", requireAuth("admin"), 
   result.latestWebhookErrors = latestErrors;
   Object.assign(result, getDeletionStatus());
   result.socket = getSocketState().status;
+  result.lastDeletion = getLastDeletionStatus();
 
   const phoneQuery = typeof req.query.phone === "string" ? req.query.phone : "";
   if (phoneQuery) {
@@ -793,10 +789,22 @@ router.post("/admin/captains/adjust", requireAuth("admin"), async (req, res) => 
       if (!credit && captain.balanceFils < amountFils) {
         throw new Error(`الرصيد غير كافٍ. الرصيد الحالي: ${fromFils(captain.balanceFils)} د.أ.`);
       }
-      const updated = await tx.captain.update({
-        where: { id: captain.id },
-        data: { balanceFils: credit ? { increment: amountFils } : { decrement: amountFils } }
-      });
+      let updated: { balanceFils: number };
+      if (credit) {
+        updated = await tx.captain.update({
+          where: { id: captain.id },
+          data: { balanceFils: { increment: amountFils } }
+        });
+      } else {
+        const debited = await tx.captain.updateMany({
+          where: { id: captain.id, balanceFils: { gte: amountFils } },
+          data: { balanceFils: { decrement: amountFils } }
+        });
+        if (debited.count !== 1) {
+          throw new Error(`الرصيد غير كافٍ. الرصيد الحالي: ${fromFils(captain.balanceFils)} د.أ.`);
+        }
+        updated = await tx.captain.findUniqueOrThrow({ where: { id: captain.id }, select: { balanceFils: true } });
+      }
       await tx.ledgerEntry.create({
         data: {
           captainId: captain.id,
@@ -898,10 +906,14 @@ router.post("/admin/commission-transfer", requireAuth("admin"), async (req, res)
       }
 
       // An admin transfer is taken whatever the consumer's balance, even below zero.
-      const updatedConsumer = await tx.captain.update({
-        where: { id: consumer.id },
+      const debit = await tx.captain.updateMany({
+        where: { id: consumer.id, balanceFils: { gte: amountFils } },
         data: { balanceFils: { decrement: amountFils } }
       });
+      if (debit.count !== 1) {
+        return { error: "رصيد المستهلك غير كافٍ لإتمام التحويل؛ لا يمكن أن يصبح الرصيد سالباً.", status: 400 as const };
+      }
+      const updatedConsumer = await tx.captain.findUniqueOrThrow({ where: { id: consumer.id } });
       const updatedProduct = await tx.captain.update({
         where: { id: product.id },
         data: { balanceFils: { increment: amountFils } }
@@ -971,7 +983,6 @@ router.put("/admin/settings", requireAuth("admin"), async (req, res) => {
     groupFloorJod: z.union([z.string(), z.number()]),
     riderCommissionPerFiveJod: z.union([z.string(), z.number()]),
     orderCommissionPerFiveJod: z.union([z.string(), z.number()]),
-    allowNegativeCommission: z.boolean().optional()
   }).safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "أدخل القيم المالية المطلوبة." });
@@ -990,16 +1001,12 @@ router.put("/admin/settings", requireAuth("admin"), async (req, res) => {
         groupFloorFils: toFils(parsed.data.groupFloorJod),
         riderCommissionPerFiveFils: toFils(parsed.data.riderCommissionPerFiveJod),
         orderCommissionPerFiveFils: toFils(parsed.data.orderCommissionPerFiveJod),
-        ...(parsed.data.allowNegativeCommission === undefined
-          ? {}
-          : { allowNegativeCommission: parsed.data.allowNegativeCommission })
       }
     });
     res.json({
       groupFloorJod: fromFils(updated.groupFloorFils),
       riderCommissionPerFiveJod: fromFils(updated.riderCommissionPerFiveFils),
-      orderCommissionPerFiveJod: fromFils(updated.orderCommissionPerFiveFils),
-      allowNegativeCommission: updated.allowNegativeCommission
+      orderCommissionPerFiveJod: fromFils(updated.orderCommissionPerFiveFils)
     });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "قيمة مالية غير صالحة." });

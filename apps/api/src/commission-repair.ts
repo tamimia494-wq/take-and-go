@@ -63,9 +63,8 @@ export async function repairCommissions(historyCount = 300) {
     historyError = error instanceof Error ? error.message : String(error);
   }
   const repaired = await prisma.$transaction(async (tx) => {
-    // Likes collected before balances were enforced are charged once, even below zero; afterwards the rules apply.
     const backlogDone = await tx.maintenanceRun.findUnique({ where: { id: LIKE_BACKLOG_RUN_ID } });
-    const likes = await chargeApprovedUnchargedReplies(tx, !backlogDone);
+    const likes = await chargeApprovedUnchargedReplies(tx);
     if (!backlogDone) await tx.maintenanceRun.create({ data: { id: LIKE_BACKLOG_RUN_ID } });
     const audit = await runCommissionAudit(tx);
     const runAt = Date.now();

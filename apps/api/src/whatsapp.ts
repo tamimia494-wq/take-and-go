@@ -11,7 +11,7 @@ import {
   phoneFromChatId
 } from "./money";
 import { rememberMessageParticipant } from "./whatsapp-socket";
-import { allowsNegativeCommission, cancelChargedJob, processJobReaction, removeJobLike } from "./accounting";
+import { cancelChargedJob, processJobReaction, removeJobLike } from "./accounting";
 import { calculateCommissionFils, extractPriceAfterLabel } from "./pricing";
 import { isCancellationReaction, isLikeReaction } from "./reactions";
 
@@ -383,7 +383,6 @@ async function recoverJobsAndRepliesFromHistory(
     .sort((left, right) => Number(left.timestamp ?? 0) - Number(right.timestamp ?? 0));
   let jobsRecorded = 0;
   let repliesRecorded = 0;
-  const allowNegative = await allowsNegativeCommission(prisma);
   for (const entry of messages) {
     const messageId = stringValue(entry.idMessage);
     const text = stringValue(entry.textMessage) ??
@@ -412,7 +411,7 @@ async function recoverJobsAndRepliesFromHistory(
     if (job) {
       // Replies from accounts that are not active are deleted live, and admins do not take orders.
       if (!captain || captain.status !== "ACTIVE" || isExcludedAdminPhone(senderPhone)) continue;
-      if (!allowNegative && await wasBelowMinimumBalance(captain, createdAt)) continue;
+      if (await wasBelowMinimumBalance(captain, createdAt)) continue;
       const existing = await prisma.whatsAppReply.findUnique({ where: { messageId }, select: { id: true } });
       if (existing) continue;
       await prisma.whatsAppReply.create({
@@ -701,7 +700,6 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
       ? "unregistered"
       : !hasSufficientCaptainReplyBalance(captain.balanceFils, job.commissionFils) ? "insufficient" : null;
     if (rejection) {
-      // The reply stays stored as REJECTED: while negative charges are allowed, the owner's like can still charge it.
       await prisma.whatsAppReply.updateMany({
         where: { messageId, status: "PENDING" },
         data: { status: "REJECTED" }

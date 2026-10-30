@@ -7,7 +7,7 @@ import { ArrowDownLeft, ArrowUpLeft, BadgeCheck, CircleDollarSign, KeyRound, Log
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
 const API = API_URL.endsWith("/api") ? API_URL : `${API_URL.replace(/\/$/, "")}/api`;
 
-type Settings = { groupFloorJod: number; riderCommissionPerFiveJod: number; orderCommissionPerFiveJod: number; allowNegativeCommission?: boolean };
+type Settings = { groupFloorJod: number; riderCommissionPerFiveJod: number; orderCommissionPerFiveJod: number };
 type Captain = { id: string; phone: string; fullName: string | null; status: "ACTIVE" | "PENDING_PROFILE" | "SUSPENDED"; balanceJod: number; createdAt: string };
 type Activity = { id: string; description: string; type: string; amountJod: number; createdAt: string; captain: { fullName: string | null; phone: string } };
 type PaymentMethod = { id: string; label: string; details: string };
@@ -688,14 +688,6 @@ export default function AdminHome() {
                 <MoneyInput label="عمولة الراكب / لكل 5" value={settings.riderCommissionPerFiveJod} onChange={(value) => setSettings({ ...settings, riderCommissionPerFiveJod: value })} />
                 <MoneyInput label="عمولة الأوردر / لكل 5" value={settings.orderCommissionPerFiveJod} onChange={(value) => setSettings({ ...settings, orderCommissionPerFiveJod: value })} />
               </div>
-              <label className="hint">
-                <input
-                  type="checkbox"
-                  checked={settings.allowNegativeCommission ?? true}
-                  onChange={(event) => setSettings({ ...settings, allowNegativeCommission: event.target.checked })}
-                />{" "}
-                خصم عمولة اللايك حتى لو صار رصيد الكابتن بالسالب
-              </label>
               <button className="button primary" disabled={busy}>حفظ الإعدادات</button>
               <p className="hint">تُخصم أرضية الجروب كل خميس الساعة 11:59 مساءً بتوقيت عمّان.</p>
             </form>
@@ -739,7 +731,7 @@ export default function AdminHome() {
               <label>قيمة العمولة بالدينار<input name="amount" type="number" min="0.001" step="0.001" placeholder="0.000" required /></label>
               <button className="button primary" disabled={busy}><CircleDollarSign size={16} /> تنفيذ التحويل</button>
             </form>
-            <p className="hint">يشترط وجود الحسابين، وتُخصم العمولة من المستهلك مهما كان رصيده حتى لو صار بالسالب. تُسجل حركتا الخصم والإضافة في سجل الحسابين.</p>
+            <p className="hint">يشترط وجود الحسابين وتوفر رصيد كافٍ لدى المستهلك؛ لا يمكن أن يصبح رصيد أي حساب سالباً. تُسجل حركتا الخصم والإضافة في سجل الحسابين.</p>
           </article>
           <article className="panel" style={{ gridColumn: "1 / -1" }}>
         <section className="admin-grid">

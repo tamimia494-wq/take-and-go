@@ -26,12 +26,6 @@ type CancelResult =
     }
   | { result: "already_canceled" | "not_charged" | "not_tracked"; amountFils: number };
 
-/** Admin switch: while on, a liked active captain is charged even when it takes their balance below zero. */
-export async function allowsNegativeCommission(db: Prisma.TransactionClient | typeof prisma): Promise<boolean> {
-  const settings = await db.appSettings.findUnique({ where: { id: "default" }, select: { allowNegativeCommission: true } });
-  return settings?.allowNegativeCommission ?? false;
-}
-
 export async function processJobReaction(replyMessageId: string): Promise<ProcessResult> {
   return prisma.$transaction(async (tx) => {
     const reply = await tx.whatsAppReply.findUnique({
@@ -103,11 +97,12 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
       };
     }
 
-    // A captain can only take a job when their balance covers its commission; balances never go below zero.
     const debited = await tx.captain.updateMany({
-      where: (await allowsNegativeCommission(tx))
-        ? { id: reply.captain.id }
-        : { id: reply.captain.id, balanceFils: { gte: reply.job.commissionFils } },
+      where: {
+        id: reply.captain.id,
+        status: "ACTIVE",
+        balanceFils: { gte: Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, reply.job.commissionFils) }
+      },
       data: { balanceFils: { decrement: reply.job.commissionFils } }
     });
     if (debited.count !== 1) {
@@ -235,8 +230,7 @@ type SkippedApproval = { jobId: string; replyId: string; reason: string };
 async function chargeNextApprovedReply(
   tx: Prisma.TransactionClient,
   jobId: string,
-  skipped: SkippedApproval[],
-  force = false
+  skipped: SkippedApproval[]
 ): Promise<ApprovedReplyCharge | null> {
   const job = await tx.whatsAppJob.findUniqueOrThrow({ where: { id: jobId } });
   if (job.status !== JobStatus.PENDING) return null;
@@ -249,7 +243,6 @@ async function chargeNextApprovedReply(
     orderBy: { approvedAt: "asc" }
   });
   if (!candidates.length) return null;
-  const allowNegative = force || await allowsNegativeCommission(tx);
   const owner = job.sourceSenderPhone
     ? await tx.captain.findUnique({ where: { phone: job.sourceSenderPhone } })
     : null;
@@ -263,11 +256,11 @@ async function chargeNextApprovedReply(
       continue;
     }
     const debited = await tx.captain.updateMany({
-      where: force
-        ? { id: reply.captainId }
-        : allowNegative
-          ? { id: reply.captainId, status: "ACTIVE" }
-          : { id: reply.captainId, status: "ACTIVE", balanceFils: { gte: job.commissionFils } },
+      where: {
+        id: reply.captainId,
+        status: "ACTIVE",
+        balanceFils: { gte: Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, job.commissionFils) }
+      },
       data: { balanceFils: { decrement: job.commissionFils } }
     });
     if (debited.count !== 1) {
@@ -292,7 +285,7 @@ async function chargeNextApprovedReply(
 }
 
 /** Charges, for every pending job, the reply the owner approved with 👍 whose commission was never taken. */
-export async function chargeApprovedUnchargedReplies(tx: Prisma.TransactionClient, force = false): Promise<{
+export async function chargeApprovedUnchargedReplies(tx: Prisma.TransactionClient): Promise<{
   charged: ApprovedReplyCharge[];
   skipped: SkippedApproval[];
 }> {
@@ -308,13 +301,13 @@ export async function chargeApprovedUnchargedReplies(tx: Prisma.TransactionClien
   const charged: ApprovedReplyCharge[] = [];
   const skipped: SkippedApproval[] = [];
   for (const { jobId } of jobs) {
-    const result = await chargeNextApprovedReply(tx, jobId, skipped, force);
+    const result = await chargeNextApprovedReply(tx, jobId, skipped);
     if (result) charged.push(result);
   }
   return { charged, skipped };
 }
 
-/** Refunds the charged captain and takes the commission back from the owner, writing both sides to the ledger. */
+/** Refunds the charged captain and takes the commission back from the owner without allowing a negative balance. */
 async function reverseJobCharge(
   tx: Prisma.TransactionClient,
   job: ChargeableJob,
@@ -339,10 +332,14 @@ async function reverseJobCharge(
       idempotencyKey: keyPrefix
     }
   });
-  const ownerAfterReversal = await tx.captain.update({
-    where: { id: ownerId },
+  const ownerDebit = await tx.captain.updateMany({
+    where: { id: ownerId, balanceFils: { gte: job.commissionFils } },
     data: { balanceFils: { decrement: job.commissionFils } }
   });
+  if (ownerDebit.count !== 1) {
+    throw new Error("رصيد صاحب الطلب غير كافٍ لعكس العمولة؛ اشحن الرصيد قبل إلغاء العملية.");
+  }
+  const ownerAfterReversal = await tx.captain.findUniqueOrThrow({ where: { id: ownerId } });
   const ownerReversalEntries = [
     { type: LedgerType.RIDER_COMMISSION, amountFils: job.riderCommissionFils },
     { type: LedgerType.ORDER_COMMISSION, amountFils: job.orderCommissionFils }
@@ -419,7 +416,7 @@ export async function removeJobLike(replyMessageId: string): Promise<LikeRemoval
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 }
 
-/** ❌ always refunds the charged captain, even when returning the commission takes the owner below zero. */
+/** Refunds a charged captain only when the owner can cover the commission reversal. */
 export async function cancelChargedJob(replyMessageId: string, actorPhone: string): Promise<CancelResult> {
   return prisma.$transaction(async (tx) => {
     const reply = await tx.whatsAppReply.findUnique({
@@ -505,16 +502,19 @@ export async function chargeWeeklyFloor(): Promise<void> {
       select: { id: true, balanceFils: true }
     });
     for (const captain of captains) {
-      const balanceAfterFils = captain.balanceFils - settings.groupFloorFils;
-      await tx.captain.update({
-        where: { id: captain.id },
-        data: { balanceFils: balanceAfterFils }
+      const floorChargeFils = Math.min(captain.balanceFils, settings.groupFloorFils);
+      if (floorChargeFils <= 0) continue;
+      const debit = await tx.captain.updateMany({
+        where: { id: captain.id, balanceFils: { gte: floorChargeFils } },
+        data: { balanceFils: { decrement: floorChargeFils } }
       });
+      if (debit.count !== 1) continue;
+      const balanceAfterFils = captain.balanceFils - floorChargeFils;
       await tx.ledgerEntry.create({
         data: {
           captainId: captain.id,
           type: LedgerType.GROUP_FLOOR,
-          amountFils: -settings.groupFloorFils,
+          amountFils: -floorChargeFils,
           balanceAfterFils,
           description: "خصم أرضية الجروب الأسبوعية",
           idempotencyKey: `floor:${weekKey}:${captain.id}`
