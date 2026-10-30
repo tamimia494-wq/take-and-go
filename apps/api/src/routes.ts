@@ -20,6 +20,61 @@ router.get("/health", (_req, res) => res.json({ status: "ok" }));
 router.post("/auth/captain/login", captainLogin);
 router.post("/auth/admin/login", adminLogin);
 
+router.post("/captain/account-requests", async (req, res) => {
+  const parsed = z.object({
+    fullName: z.string().trim().min(3).max(100),
+    phone: z.string().min(8).max(24)
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "أدخل الاسم الكامل ورقم هاتف صحيحاً." });
+    return;
+  }
+
+  let phone: string;
+  try {
+    phone = normalizePhone(parsed.data.phone);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "رقم الهاتف غير صالح." });
+    return;
+  }
+
+  try {
+    const request = await prisma.$transaction(async (tx) => {
+      if (await tx.captain.findUnique({ where: { phone }, select: { id: true } })) {
+        throw new Error("يوجد حساب مسجل بهذا الرقم بالفعل.");
+      }
+      if (await tx.captainAccountRequest.findFirst({
+        where: { phone, status: "PENDING" },
+        select: { id: true }
+      })) {
+        throw new Error("لديك طلب إنشاء حساب قيد المراجعة بالفعل.");
+      }
+      return tx.captainAccountRequest.create({
+        data: { fullName: parsed.data.fullName, phone }
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    res.status(201).json({ id: request.id, status: request.status });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      res.status(409).json({ error: "لديك طلب إنشاء حساب قيد المراجعة بالفعل." });
+      return;
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+      res.status(409).json({ error: "تغيّرت حالة الطلب بالتزامن. تحقق من حالة الحساب ثم أعد المحاولة." });
+      return;
+    }
+    if (error instanceof Error && error.message === "يوجد حساب مسجل بهذا الرقم بالفعل.") {
+      res.status(409).json({ error: error.message });
+      return;
+    }
+    if (error instanceof Error && error.message === "لديك طلب إنشاء حساب قيد المراجعة بالفعل.") {
+      res.status(409).json({ error: error.message });
+      return;
+    }
+    throw error;
+  }
+});
+
 router.get("/captain/me", requireAuth("captain"), async (req, res) => {
   const captain = await prisma.captain.findUniqueOrThrow({
     where: { id: req.user!.id },
@@ -376,6 +431,115 @@ router.get("/admin/green-api/diagnose", requireAuth("admin"), async (req, res) =
     return;
   }
   try {
+router.post("/admin/captains", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({
+    fullName: z.string().trim().min(3).max(100),
+    phone: z.string().min(8).max(24)
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "أدخل الاسم الكامل ورقم هاتف صحيحاً." });
+    return;
+  }
+  let phone: string;
+  try {
+    phone = normalizePhone(parsed.data.phone);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "رقم الهاتف غير صالح." });
+    return;
+  }
+
+  try {
+    const passwordHash = await bcrypt.hash("123456", 12);
+    const captain = await prisma.$transaction(async (tx) => {
+      if (await tx.captainAccountRequest.findFirst({
+        where: { phone, status: "PENDING" },
+        select: { id: true }
+      })) {
+        throw new Error("لدى هذا الرقم طلب إنشاء حساب معلق؛ راجعه من قائمة الطلبات.");
+      }
+      return tx.captain.create({
+        data: {
+          fullName: parsed.data.fullName,
+          phone,
+          passwordHash,
+          status: "ACTIVE"
+        },
+        select: { id: true, fullName: true, phone: true, status: true }
+      });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    res.status(201).json(captain);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      res.status(409).json({ error: "يوجد حساب مسجل بهذا الرقم بالفعل." });
+      return;
+    }
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+      res.status(409).json({ error: "تغيّرت حالة الطلب بالتزامن. تحقق من الطلبات ثم أعد المحاولة." });
+      return;
+    }
+    if (error instanceof Error && error.message === "لدى هذا الرقم طلب إنشاء حساب معلق؛ راجعه من قائمة الطلبات.") {
+      res.status(409).json({ error: error.message });
+      return;
+    }
+    throw error;
+  }
+});
+
+router.get("/admin/captain-account-requests", requireAuth("admin"), async (_req, res) => {
+  const requests = await prisma.captainAccountRequest.findMany({
+    where: { status: "PENDING" },
+    orderBy: { createdAt: "asc" }
+  });
+  res.json(requests);
+});
+
+router.post("/admin/captain-account-requests/:id/review", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({ action: z.enum(["approve", "reject"]) }).safeParse(req.body);
+  const requestId = req.params.id;
+  if (!parsed.success || typeof requestId !== "string") {
+    res.status(400).json({ error: "طلب المراجعة غير صالح." });
+    return;
+  }
+
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const request = await tx.captainAccountRequest.findUniqueOrThrow({ where: { id: requestId } });
+      if (request.status !== "PENDING") throw new Error("تمت مراجعة هذا الطلب مسبقاً.");
+      const updated = await tx.captainAccountRequest.updateMany({
+        where: { id: requestId, status: "PENDING" },
+        data: {
+          status: parsed.data.action === "approve" ? "APPROVED" : "REJECTED",
+          reviewedAt: new Date()
+        }
+      });
+      if (updated.count !== 1) throw new Error("تمت مراجعة هذا الطلب مسبقاً.");
+      if (parsed.data.action === "reject") return { status: "REJECTED" as const };
+
+      const captain = await tx.captain.create({
+        data: {
+          fullName: request.fullName,
+          phone: request.phone,
+          passwordHash: await bcrypt.hash("123456", 12),
+          status: "ACTIVE"
+        },
+        select: { id: true, fullName: true, phone: true, status: true }
+      });
+      return { status: "APPROVED" as const, captain };
+    });
+    res.json(result);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      res.status(409).json({ error: "يوجد حساب مسجل بهذا الرقم بالفعل؛ لم يتم اعتماد الطلب." });
+      return;
+    }
+    if (error instanceof Error && error.message === "تمت مراجعة هذا الطلب مسبقاً.") {
+      res.status(409).json({ error: error.message });
+      return;
+    }
+    throw error;
+  }
+});
+
     const settings = await greenApiRequest<{ stateInstance?: string; phone?: string; errorMessage?: string }>("getWaSettings");
     result.instanceState = settings.stateInstance ?? settings.errorMessage ?? "unknown";
     result.instancePhone = settings.phone ?? null;

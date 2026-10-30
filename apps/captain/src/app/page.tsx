@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CaptainStatementSheet, dateInputStyle, dateLabelStyle, defaultPeriod, downloadPdf, type CaptainWithStatement } from "./statement";
-import { ArrowDownLeft, ArrowLeft, ArrowUpLeft, CarFront, Check, CircleDollarSign, Clock3, Copy, LogOut, Lock, Phone, ShieldCheck, Wallet } from "lucide-react";
+import { ArrowDownLeft, ArrowLeft, ArrowUpLeft, CarFront, Check, CircleDollarSign, Clock3, Copy, LogOut, Lock, Phone, ShieldCheck, UserRoundPlus, Wallet } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
 const API = API_URL.endsWith("/api") ? API_URL : `${API_URL.replace(/\/$/, "")}/api`;
@@ -26,7 +26,7 @@ type Dashboard = {
 async function api<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API}${path}`, {
     ...options,
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}`, ...options.headers }
+    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}), ...options.headers }
   });
   // A proxy error or a crash returns an HTML page; Safari then reports a cryptic "expected pattern" error.
   const body = await response.text();
@@ -68,6 +68,8 @@ export default function CaptainHome() {
   const [topUpOpen, setTopUpOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [notice, setNotice] = useState("");
+  const [showAccountRequest, setShowAccountRequest] = useState(false);
+  const [accountRequestSent, setAccountRequestSent] = useState(false);
   const [captainName, setCaptainName] = useState<string>("");
   const [period, setPeriod] = useState(defaultPeriod);
   const [statement, setStatement] = useState<{ captain: CaptainWithStatement; from: string; to: string } | null>(null);
@@ -221,6 +223,24 @@ export default function CaptainHome() {
     }
   }
 
+  async function requestAccount(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      await api("/captain/account-requests", "", {
+        method: "POST",
+        body: JSON.stringify({ fullName: form.get("fullName"), phone: form.get("phone") })
+      });
+      setAccountRequestSent(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر إرسال طلب إنشاء الحساب.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function activate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -282,7 +302,39 @@ export default function CaptainHome() {
             <span className="hero-logo-name">Take<b>&amp;</b>go</span>
             <span className="hero-logo-tagline">معك في كل طريق</span>
           </div>
-          <form className="auth-card-dark" onSubmit={login}>
+          {showAccountRequest ? (
+            <form className="auth-card-dark" onSubmit={requestAccount}>
+              <span className="hero-captain-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="8" r="3.2" />
+                  <path d="M5 20c0-3.6 3.1-5.6 7-5.6s7 2 7 5.6" />
+                  <path d="M9.5 4.6C10 3.6 10.9 3 12 3s2 .6 2.5 1.6" />
+                </svg>
+              </span>
+              <h2>طلب إنشاء حساب كابتن</h2>
+              {accountRequestSent ? (
+                <>
+                  <p className="auth-card-dark-sub" role="status">تم إرسال طلبك إلى الإدارة للمراجعة. ستتمكن من الدخول بعد الموافقة، بكلمة المرور المؤقتة 123456.</p>
+                  <button type="button" className="hero-button" onClick={() => { setShowAccountRequest(false); setAccountRequestSent(false); setError(""); }}>العودة لتسجيل الدخول</button>
+                </>
+              ) : (
+                <>
+                  <p className="auth-card-dark-sub">أدخل اسمك ورقم هاتفك لإرسال الطلب إلى الإدارة.</p>
+                  <label className="dark-field">
+                    <span className="dark-field-icon"><Phone size={17} /></span>
+                    <input name="fullName" type="text" autoComplete="name" minLength={3} maxLength={100} placeholder="الاسم الكامل" required />
+                  </label>
+                  <label className="dark-field">
+                    <span className="dark-field-icon"><UserRoundPlus size={17} /></span>
+                    <input name="phone" type="tel" inputMode="tel" autoComplete="tel" maxLength={24} placeholder="رقم الهاتف" required />
+                  </label>
+                  {error && <p className="error-message dark" role="alert">{error}</p>}
+                  <button className="hero-button" disabled={busy}>{busy ? "جارٍ إرسال الطلب..." : "إرسال طلب إنشاء الحساب"} <ArrowUpLeft size={18} /></button>
+                  <button type="button" className="hero-button" onClick={() => { setShowAccountRequest(false); setError(""); }}>لدي حساب، تسجيل الدخول</button>
+                </>
+              )}
+            </form>
+          ) : <form className="auth-card-dark" onSubmit={login}>
             <span className="hero-captain-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="44" height="44" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="8" r="3.2" />
@@ -303,7 +355,8 @@ export default function CaptainHome() {
             </label>
             {error && <p className="error-message dark" role="alert">{error}</p>}
             <button className="hero-button" disabled={busy}>{busy ? "جارٍ الدخول..." : "دخول"} <ArrowLeft size={18} /></button>
-          </form>
+            <button type="button" className="hero-button" onClick={() => { setShowAccountRequest(true); setError(""); }}>إنشاء حساب جديد</button>
+          </form>}
         </div>
         <footer className="hero-footer">Take &amp;go <span>·</span> معك في كل طريق</footer>
       </main>

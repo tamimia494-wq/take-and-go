@@ -21,7 +21,6 @@ export async function runCommissionAudit(db: Prisma.TransactionClient | typeof p
   const ownerPhones = [...new Set(jobs
     .map((job) => job.sourceSenderPhone)
     .filter((phone): phone is string => phone !== null))];
-  const jobIds = jobs.map((job) => job.id);
   const [captains, entries] = await Promise.all([
     db.captain.findMany({
       where: { phone: { in: ownerPhones } },
@@ -29,7 +28,7 @@ export async function runCommissionAudit(db: Prisma.TransactionClient | typeof p
     }),
     db.ledgerEntry.findMany({
       where: {
-        reference: { in: jobIds },
+        reference: { not: null },
         type: { in: [LedgerType.ORDER_COMMISSION, LedgerType.RIDER_COMMISSION, LedgerType.ADJUSTMENT] }
       },
       select: { reference: true, captainId: true, type: true, amountFils: true }

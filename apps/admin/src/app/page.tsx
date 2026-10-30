@@ -12,6 +12,7 @@ type Captain = { id: string; phone: string; fullName: string | null; status: "AC
 type Activity = { id: string; description: string; type: string; amountJod: number; createdAt: string; captain: { fullName: string | null; phone: string } };
 type PaymentMethod = { id: string; label: string; details: string };
 type TopUpRequest = { id: string; captainName: string; captainPhone: string; amountJod: number; hasReceipt: boolean; status: string; createdAt: string };
+type CaptainAccountRequest = { id: string; fullName: string; phone: string; createdAt: string };
 type Overview = { captainCount: number; activeCaptainCount: number; totalBalanceJod: number; settings: Settings; latestActivity: Activity[] };
 type CommissionAudit = {
   checkedJobs: number;
@@ -39,7 +40,7 @@ type CommissionRepair = {
 async function api<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API}${path}`, {
     ...options,
-    headers: { "content-type": "application/json", authorization: `Bearer ${token}`, ...options.headers }
+    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}), ...options.headers }
   });
   // A proxy error or a crash returns an HTML page; Safari then reports a cryptic "expected pattern" error.
   const body = await response.text();
@@ -71,6 +72,7 @@ export default function AdminHome() {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [topUps, setTopUps] = useState<TopUpRequest[]>([]);
   const [receiptPreview, setReceiptPreview] = useState<{ id: string; url: string } | null>(null);
+  const [accountRequests, setAccountRequests] = useState<CaptainAccountRequest[]>([]);
   const [commissionAudit, setCommissionAudit] = useState<CommissionAudit | null>(null);
   const [diagnosePhone, setDiagnosePhone] = useState("");
   const [whatsAppLink, setWhatsAppLink] = useState<WhatsAppLink | null>(null);
@@ -81,11 +83,12 @@ export default function AdminHome() {
   const transferRequest = useRef<{ fingerprint: string; requestId: string } | null>(null);
 
   const refresh = useCallback(async (authToken: string) => {
-    const [home, list, methods, topUpList] = await Promise.all([
+    const [home, list, methods, topUpList, requestList] = await Promise.all([
       api<Overview>("/admin/dashboard", authToken),
       api<Captain[]>("/admin/captains", authToken),
       api<PaymentMethod[]>("/payment-methods", ""),
-      api<TopUpRequest[]>("/admin/topups", authToken)
+      api<TopUpRequest[]>("/admin/topups", authToken),
+      api<CaptainAccountRequest[]>("/admin/captain-account-requests", authToken)
     ]);
     setOverview(home);
     setSettings(home.settings);
@@ -97,6 +100,7 @@ export default function AdminHome() {
   useEffect(() => {
     const stored = window.localStorage.getItem("take-go-admin-token");
     if (stored) {
+    setAccountRequests(requestList);
       setToken(stored);
       void refresh(stored).catch((reason: unknown) => {
         window.localStorage.removeItem("take-go-admin-token");
@@ -120,6 +124,9 @@ export default function AdminHome() {
 
   useEffect(() => () => {
     if (receiptPreview) URL.revokeObjectURL(receiptPreview.url);
+      void api<CaptainAccountRequest[]>("/admin/captain-account-requests", token)
+        .then(setAccountRequests)
+        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "تعذر تحديث طلبات الحسابات."));
   }, [receiptPreview]);
 
   // Poll the WhatsApp link while it waits for the QR scan or connects, so the QR stays current.
@@ -335,6 +342,49 @@ export default function AdminHome() {
 
   async function adjustBalance(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+  async function createCaptain(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const captain = await api<{ fullName: string; phone: string }>("/admin/captains", token, {
+        method: "POST",
+        body: JSON.stringify({ fullName: form.get("fullName"), phone: form.get("phone") })
+      });
+      setNotice(`تم إنشاء حساب ${captain.fullName} (${captain.phone}). كلمة المرور المؤقتة: 123456.`);
+      formElement.reset();
+      await refresh(token);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر إنشاء حساب الكابتن.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reviewCaptainAccountRequest(requestId: string, action: "approve" | "reject") {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api<{ status: "APPROVED" | "REJECTED"; captain?: { fullName: string; phone: string } }>(
+        `/admin/captain-account-requests/${encodeURIComponent(requestId)}/review`,
+        token,
+        { method: "POST", body: JSON.stringify({ action }) }
+      );
+      setNotice(result.status === "APPROVED" && result.captain
+        ? `تمت الموافقة وإنشاء حساب ${result.captain.fullName} (${result.captain.phone}). كلمة المرور المؤقتة: 123456.`
+        : "تم رفض طلب إنشاء الحساب.");
+      await refresh(token);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذرت مراجعة طلب إنشاء الحساب.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
     if (!adjustCaptain) return;
     setBusy(true);
     setError("");
@@ -413,9 +463,11 @@ export default function AdminHome() {
         signal: AbortSignal.timeout(20000)
       });
       setCommissionAudit(result);
-      setNotice(result.issueCount
-        ? `انتهى فحص ${result.checkedJobs} طلباً، ووجد ${result.issueCount} حالة تحتاج مراجعة. لم يتم تعديل أي رصيد.`
-        : `انتهى فحص ${result.checkedJobs} طلباً؛ الحركات متطابقة ولا توجد فروقات.`);
+      setNotice(result.checkedJobs === 0
+        ? "لا توجد طلبات لإجراء تدقيق العمولات عليها."
+        : result.issueCount
+          ? `انتهى فحص ${result.checkedJobs} طلباً، ووجد ${result.issueCount} حالة تحتاج مراجعة. لم يتم تعديل أي رصيد.`
+          : `انتهى فحص ${result.checkedJobs} طلباً؛ الحركات متطابقة ولا توجد فروقات.`);
     } catch (reason) {
       setError(reason instanceof DOMException && reason.name === "TimeoutError"
         ? "استغرق فحص العمولات أكثر من 20 ثانية. انتهى الطلب تلقائياً؛ أعد المحاولة بعد قليل."
@@ -690,6 +742,33 @@ export default function AdminHome() {
             <p className="hint">يشترط وجود الحسابين، وتُخصم العمولة من المستهلك مهما كان رصيده حتى لو صار بالسالب. تُسجل حركتا الخصم والإضافة في سجل الحسابين.</p>
           </article>
           <article className="panel" style={{ gridColumn: "1 / -1" }}>
+        <section className="admin-grid">
+          <article className="panel">
+            <div className="panel-heading"><span className="panel-icon blue"><UserRoundPlus size={19} /></span><div><h2>إنشاء حساب كابتن</h2><p>أنشئ حساباً مباشرة باستخدام الاسم ورقم الهاتف.</p></div></div>
+            <form className="commission-transfer-form" onSubmit={createCaptain}>
+              <label>اسم الكابتن<input name="fullName" type="text" autoComplete="name" minLength={3} maxLength={100} required /></label>
+              <label>رقم الهاتف<input name="phone" type="tel" inputMode="tel" autoComplete="tel" dir="ltr" minLength={8} maxLength={24} placeholder="079xxxxxxx" required /></label>
+              <button className="button primary" disabled={busy}><UserRoundPlus size={16} /> إنشاء الحساب</button>
+            </form>
+            <p className="hint">كلمة المرور الأولية للحساب الجديد هي <bdi>123456</bdi>، ويُنصح بتغييرها فور تسجيل الدخول.</p>
+          </article>
+          <article className="panel">
+            <div className="panel-heading"><span className="panel-icon"><Users size={19} /></span><div><h2>طلبات إنشاء الحسابات</h2><p>تصل طلبات الكباتن هنا، وتتحدث القائمة تلقائياً.</p></div></div>
+            {accountRequests.length ? accountRequests.map((request) => (
+              <div key={request.id} style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid var(--line)" }}>
+                <div>
+                  <strong>{request.fullName}</strong>
+                  <div dir="ltr" style={{ textAlign: "right", marginTop: 4 }}><bdi>{request.phone}</bdi></div>
+                  <small className="hint">{new Date(request.createdAt).toLocaleString("ar-JO")}</small>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="button primary" disabled={busy} onClick={() => void reviewCaptainAccountRequest(request.id, "approve")}>موافقة وإنشاء الحساب</button>
+                  <button className="button ghost" disabled={busy} onClick={() => void reviewCaptainAccountRequest(request.id, "reject")}>رفض</button>
+                </div>
+              </div>
+            )) : <p className="hint">لا توجد طلبات إنشاء حساب معلقة حالياً.</p>}
+          </article>
+        </section>
             <div className="panel-heading"><span className="panel-icon"><Wallet size={19} /></span><div><h2>كشف حساب الكباتن</h2><p>الإنتاج والاستهلاك والشحن والسحب والأرضيات وصافي الربح لكل الكباتن بكبسة وحدة</p></div></div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "end", margin: "8px 0 12px" }}>
               <label style={dateLabelStyle}>من <input style={dateInputStyle} type="date" value={statementPeriod.from} max={statementPeriod.to} onChange={(event) => setStatementPeriod({ ...statementPeriod, from: event.target.value })} /></label>

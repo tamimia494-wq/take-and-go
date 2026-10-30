@@ -14,6 +14,12 @@ enum CaptainStatus {
   SUSPENDED
 }
 
+enum CaptainAccountRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum TopUpStatus {
   PENDING
   APPROVED
@@ -69,6 +75,18 @@ model Captain {
   ledgerEntries  LedgerEntry[]
   replies        WhatsAppReply[]
   topUpRequests  TopUpRequest[]
+}
+
+model CaptainAccountRequest {
+  id         String                       @id @default(cuid())
+  fullName   String
+  phone      String
+  status     CaptainAccountRequestStatus  @default(PENDING)
+  createdAt  DateTime                     @default(now())
+  reviewedAt DateTime?
+
+  @@index([status, createdAt])
+  @@index([phone, status])
 }
 
 model Admin {
