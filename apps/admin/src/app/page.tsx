@@ -95,12 +95,12 @@ export default function AdminHome() {
     setCaptains(list);
     setPaymentMethods(methods);
     setTopUps(topUpList);
+    setAccountRequests(requestList);
   }, []);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("take-go-admin-token");
     if (stored) {
-    setAccountRequests(requestList);
       setToken(stored);
       void refresh(stored).catch((reason: unknown) => {
         window.localStorage.removeItem("take-go-admin-token");
@@ -118,15 +118,15 @@ export default function AdminHome() {
       void api<TopUpRequest[]>("/admin/topups", token)
         .then(setTopUps)
         .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "تعذر تحديث طلبات الشحن."));
+      void api<CaptainAccountRequest[]>("/admin/captain-account-requests", token)
+        .then(setAccountRequests)
+        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "تعذر تحديث طلبات الحسابات."));
     }, 15000);
     return () => window.clearInterval(interval);
   }, [token]);
 
   useEffect(() => () => {
     if (receiptPreview) URL.revokeObjectURL(receiptPreview.url);
-      void api<CaptainAccountRequest[]>("/admin/captain-account-requests", token)
-        .then(setAccountRequests)
-        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "تعذر تحديث طلبات الحسابات."));
   }, [receiptPreview]);
 
   // Poll the WhatsApp link while it waits for the QR scan or connects, so the QR stays current.
@@ -342,6 +342,31 @@ export default function AdminHome() {
 
   async function adjustBalance(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!adjustCaptain) return;
+    setBusy(true);
+    setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const result = await api<{ fullName: string | null; phone: string; balanceJod: number }>("/admin/captains/adjust", token, {
+        method: "POST",
+        body: JSON.stringify({
+          phone: adjustCaptain.phone,
+          amount: form.get("amount"),
+          action: adjustAction,
+          description: adjustAction === "credit" ? "شحن رصيد" : "خصم رصيد"
+        })
+      });
+      setNotice(`${adjustAction === "credit" ? "تم شحن" : "تم خصم"} ${money(Number(form.get("amount")))} د.أ ${adjustAction === "credit" ? "على" : "من"} حساب ${result.fullName ?? result.phone}. الرصيد الجديد: ${money(result.balanceJod)} د.أ`);
+      setAdjustCaptain(null);
+      setAdjustOpen(false);
+      await refresh(token);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تنفيذ العملية.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function createCaptain(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -385,30 +410,6 @@ export default function AdminHome() {
     }
   }
 
-    if (!adjustCaptain) return;
-    setBusy(true);
-    setError("");
-    const form = new FormData(event.currentTarget);
-    try {
-      const result = await api<{ fullName: string | null; phone: string; balanceJod: number }>("/admin/captains/adjust", token, {
-        method: "POST",
-        body: JSON.stringify({
-          phone: adjustCaptain.phone,
-          amount: form.get("amount"),
-          action: adjustAction,
-          description: adjustAction === "credit" ? "شحن رصيد" : "خصم رصيد"
-        })
-      });
-      setNotice(`${adjustAction === "credit" ? "تم شحن" : "تم خصم"} ${money(Number(form.get("amount")))} د.أ ${adjustAction === "credit" ? "على" : "من"} حساب ${result.fullName ?? result.phone}. الرصيد الجديد: ${money(result.balanceJod)} د.أ`);
-      setAdjustCaptain(null);
-      setAdjustOpen(false);
-      await refresh(token);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر تنفيذ العملية.");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function transferCommission(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
