@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CaptainStatementSheet, dateInputStyle, dateLabelStyle, defaultPeriod, downloadPdf, type CaptainWithStatement } from "./statement";
+import { CaptainStatementSheet, CloseStatementButton, dateInputStyle, dateLabelStyle, defaultPeriod, downloadPdf, type CaptainWithStatement } from "./statement";
 import { ArrowDownLeft, ArrowLeft, ArrowUpLeft, CarFront, Check, CircleDollarSign, Clock3, Copy, LogOut, Lock, Phone, ShieldCheck, UserRoundPlus, Wallet } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
@@ -67,6 +67,7 @@ export default function CaptainHome() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [topUpOpen, setTopUpOpen] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showLedger, setShowLedger] = useState(false);
   const [notice, setNotice] = useState("");
   const [showAccountRequest, setShowAccountRequest] = useState(false);
   const [accountRequestSent, setAccountRequestSent] = useState(false);
@@ -451,6 +452,7 @@ export default function CaptainHome() {
           </div>
           {statement && (
             <div ref={statementRef}>
+              <CloseStatementButton onClose={() => setStatement(null)} />
               <CaptainStatementSheet captain={statement.captain} period={{ from: statement.from, to: statement.to }} />
             </div>
           )}
@@ -471,8 +473,8 @@ export default function CaptainHome() {
           </div>
         </section>
         <section className="ledger-section">
-          <div className="section-heading"><div><p className="eyebrow">آخر الحركات</p><h2>سجل الجرد والخصومات</h2></div><span className="ledger-count">{dashboard?.ledger.length ?? 0} حركة</span></div>
-          <div className="ledger-list">
+          <div className="section-heading"><div><p className="eyebrow">آخر الحركات</p><h2>سجل الجرد والخصومات</h2></div><button type="button" className="password-toggle" aria-expanded={showLedger} onClick={() => setShowLedger((open) => !open)}>{showLedger ? "إخفاء الحركات" : `عرض الحركات (${dashboard?.ledger.length ?? 0})`}</button></div>
+          {showLedger && <div className="ledger-list">
             {dashboard?.ledger.length ? dashboard.ledger.map((entry) => (
               <article className="ledger-row" key={entry.id}>
                 <span className={`ledger-icon ${entry.amountJod >= 0 ? "credit" : "debit"}`}>
@@ -482,7 +484,7 @@ export default function CaptainHome() {
                 <div className="ledger-amount"><strong className={entry.amountJod >= 0 ? "positive" : ""}>{entry.amountJod > 0 ? "+" : ""}{money(entry.amountJod)} د.أ</strong><small>الرصيد {money(entry.balanceAfterJod)} د.أ</small></div>
               </article>
             )) : <div className="empty-state">لا توجد حركات مالية حتى الآن.</div>}
-          </div>
+          </div>}
         </section>
       </section>
       <footer className="footer">Take &amp; Go <span>·</span> رحلتك .. علينا</footer>

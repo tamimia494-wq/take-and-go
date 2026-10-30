@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 // Account statement pages for the captain app and the admin dashboard (the same file lives in both apps). They are
 // drawn as a white sheet so the screen and the downloaded PDF look the same.
 
@@ -129,6 +131,26 @@ export const dateInputStyle: React.CSSProperties = {
   colorScheme: "light"
 };
 
+const toggleButton: React.CSSProperties = {
+  background: navy,
+  color: "#ffffff",
+  border: "none",
+  borderRadius: 10,
+  padding: "8px 14px",
+  fontFamily: "inherit",
+  fontWeight: 700,
+  cursor: "pointer"
+};
+
+/** Closes the statement. It sits on top of the sheet and stays out of the PDF. */
+export function CloseStatementButton({ onClose }: { onClose: () => void }) {
+  return (
+    <div data-html2canvas-ignore="true" style={{ display: "flex", justifyContent: "flex-start", position: "sticky", insetInlineStart: 0, marginBottom: 8 }}>
+      <button type="button" aria-label="إغلاق الكشف" title="إغلاق الكشف" style={{ ...toggleButton, width: 40, height: 40, padding: 0, fontSize: 20, lineHeight: 1 }} onClick={onClose}>✕</button>
+    </div>
+  );
+}
+
 function SheetHeader({ heading, period }: { heading: string; period: { from: string; to: string } }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", borderBottom: `3px solid ${navy}`, paddingBottom: 10, marginBottom: 8 }}>
@@ -185,6 +207,8 @@ function transactionLabel(entry: StatementTransaction): string {
 /** One captain's statement. */
 export function CaptainStatementSheet({ captain, period }: { captain: CaptainWithStatement; period: { from: string; to: string } }) {
   const { statement } = captain;
+  const [showEntries, setShowEntries] = useState(false);
+  const entryCount = captain.entries?.length ?? 0;
   return (
     <div style={sheet}>
       <SheetHeader heading="كشف حساب كابتن" period={period} />
@@ -218,7 +242,13 @@ export function CaptainStatementSheet({ captain, period }: { captain: CaptainWit
         </tbody>
       </table>
 
-      <div style={title}>تفاصيل الحركات ({captain.entries?.length ?? 0})</div>
+      <div data-html2canvas-ignore="true">
+        <button type="button" style={toggleButton} aria-expanded={showEntries} onClick={() => setShowEntries((open) => !open)}>
+          {showEntries ? "إخفاء حركة الحساب" : `عرض حركة الحساب (${entryCount})`}
+        </button>
+      </div>
+      {showEntries && <>
+      <div style={title}>تفاصيل الحركات ({entryCount})</div>
       <table style={table}>
         <thead>
           <tr><th style={head}>التاريخ</th><th style={head}>نوع الحركة</th><th style={head}>التفاصيل</th><th style={head}>المبلغ</th><th style={head}>الرصيد بعد الحركة</th></tr>
@@ -239,6 +269,7 @@ export function CaptainStatementSheet({ captain, period }: { captain: CaptainWit
           {!captain.entries?.length && <tr><td style={cell} colSpan={5}>لا توجد حركات في هذه الفترة.</td></tr>}
         </tbody>
       </table>
+      </>}
     </div>
   );
 }
