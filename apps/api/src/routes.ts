@@ -756,23 +756,29 @@ router.post("/admin/captains/:id/balance", requireAuth("admin"), async (req, res
 router.post("/admin/captains/adjust", requireAuth("admin"), async (req, res) => {
   const parsed = z.object({
     phone: z.union([z.string(), z.number()]),
-    amount: z.union([z.string(), z.number()]),
-    action: z.enum(["credit", "debit"]).default("credit")
+    amount: z.union([z.string(), z.number()]).optional(),
+    action: z.enum(["credit", "debit", "debit_all"]).default("credit")
   }).safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "أدخل رقم الهاتف والمبلغ." });
+    res.status(400).json({ error: "أدخل رقم الهاتف والمبلغ أو اختر سحب كامل الرصيد." });
     return;
   }
-  let amountFils: number;
-  try {
-    amountFils = toFils(parsed.data.amount);
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : "المبلغ غير صالح." });
-    return;
-  }
-  if (amountFils <= 0) {
-    res.status(400).json({ error: "يجب أن يكون المبلغ أكبر من صفر." });
-    return;
+  let amountFils = 0;
+  if (parsed.data.action !== "debit_all") {
+    if (parsed.data.amount === undefined) {
+      res.status(400).json({ error: "أدخل المبلغ المطلوب." });
+      return;
+    }
+    try {
+      amountFils = toFils(parsed.data.amount);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "المبلغ غير صالح." });
+      return;
+    }
+    if (amountFils <= 0) {
+      res.status(400).json({ error: "يجب أن يكون المبلغ أكبر من صفر." });
+      return;
+    }
   }
   let phone: string;
   try {
@@ -781,14 +787,14 @@ router.post("/admin/captains/adjust", requireAuth("admin"), async (req, res) => 
     res.status(400).json({ error: error instanceof Error ? error.message : "رقم الهاتف غير صالح." });
     return;
   }
-  const credit = parsed.data.action !== "debit";
+  const credit = parsed.data.action === "credit";
   try {
     const result = await prisma.$transaction(async (tx) => {
       const captain = await tx.captain.findUnique({ where: { phone } });
       if (!captain) throw new Error("لا يوجد كابتن بهذا الرقم.");
-      if (!credit && captain.balanceFils < amountFils) {
-        throw new Error(`الرصيد غير كافٍ. الرصيد الحالي: ${fromFils(captain.balanceFils)} د.أ.`);
-      }
+      const debitAmountFils = parsed.data.action === "debit_all" ? captain.balanceFils : amountFils;
+      if (!credit && debitAmountFils <= 0) throw new Error("لا يوجد رصيد متاح لسحبه.");
+      if (!credit && captain.balanceFils < debitAmountFils) throw new Error("الرصيد تغيّر؛ حدّث البيانات ثم أعد المحاولة.");
       let updated: { balanceFils: number };
       if (credit) {
         updated = await tx.captain.update({
@@ -797,11 +803,15 @@ router.post("/admin/captains/adjust", requireAuth("admin"), async (req, res) => 
         });
       } else {
         const debited = await tx.captain.updateMany({
-          where: { id: captain.id, balanceFils: { gte: amountFils } },
-          data: { balanceFils: { decrement: amountFils } }
+          where: parsed.data.action === "debit_all"
+            ? { id: captain.id, balanceFils: debitAmountFils }
+            : { id: captain.id, balanceFils: { gte: debitAmountFils } },
+          data: parsed.data.action === "debit_all"
+            ? { balanceFils: 0 }
+            : { balanceFils: { decrement: debitAmountFils } }
         });
         if (debited.count !== 1) {
-          throw new Error(`الرصيد غير كافٍ. الرصيد الحالي: ${fromFils(captain.balanceFils)} د.أ.`);
+          throw new Error("الرصيد تغيّر؛ حدّث البيانات ثم أعد المحاولة.");
         }
         updated = await tx.captain.findUniqueOrThrow({ where: { id: captain.id }, select: { balanceFils: true } });
       }
@@ -809,16 +819,17 @@ router.post("/admin/captains/adjust", requireAuth("admin"), async (req, res) => 
         data: {
           captainId: captain.id,
           type: credit ? LedgerType.CREDIT : LedgerType.ADJUSTMENT,
-          amountFils: credit ? amountFils : -amountFils,
+          amountFils: credit ? amountFils : -debitAmountFils,
           balanceAfterFils: updated.balanceFils,
-          description: credit ? "شحن رصيد" : "خصم رصيد"
+          description: credit ? "شحن رصيد" : parsed.data.action === "debit_all" ? "سحب كامل الرصيد" : "خصم رصيد"
         }
       });
-      return { captain, updated };
+      return { captain, updated, amountFils: credit ? amountFils : debitAmountFils };
     });
     res.json({
       fullName: result.captain.fullName,
       phone: result.captain.phone,
+      amountJod: fromFils(result.amountFils),
       balanceJod: fromFils(result.updated.balanceFils)
     });
   } catch (error) {

@@ -65,7 +65,7 @@ export default function AdminHome() {
   const [showCaptains, setShowCaptains] = useState(false);
   const [settings, setSettings] = useState<Settings>({ groupFloorJod: 0, riderCommissionPerFiveJod: 0.75, orderCommissionPerFiveJod: 1 });
   const [adjustOpen, setAdjustOpen] = useState(false);
-  const [adjustAction, setAdjustAction] = useState<"credit" | "debit">("credit");
+  const [adjustAction, setAdjustAction] = useState<"credit" | "debit" | "debit_all">("credit");
   const [adjustCaptain, setAdjustCaptain] = useState<Captain | null>(null);
   const [query, setQuery] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -342,6 +342,36 @@ export default function AdminHome() {
 
   async function adjustBalance(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!adjustCaptain) return;
+    if (adjustAction === "debit_all" &&
+        !window.confirm(`تأكيد سحب كامل الرصيد (${money(adjustCaptain.balanceJod)} د.أ)؟`)) return;
+    setBusy(true);
+    setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      const result = await api<{ fullName: string | null; phone: string; amountJod: number; balanceJod: number }>("/admin/captains/adjust", token, {
+        method: "POST",
+        body: JSON.stringify({
+          phone: adjustCaptain.phone,
+          ...(adjustAction === "debit_all" ? {} : { amount: form.get("amount") }),
+          action: adjustAction,
+          description: adjustAction === "credit" ? "شحن رصيد" : adjustAction === "debit_all" ? "سحب كامل الرصيد" : "خصم رصيد"
+        })
+      });
+      setNotice(adjustAction === "debit_all"
+        ? `تم سحب مبلغ ${money(result.amountJod)} د.أ من حساب ${result.fullName ?? result.phone}. الرصيد المتبقي: ${money(result.balanceJod)} د.أ.`
+        : `${adjustAction === "credit" ? "تم شحن" : "تم خصم"} ${money(result.amountJod)} د.أ ${adjustAction === "credit" ? "على" : "من"} حساب ${result.fullName ?? result.phone}. الرصيد الجديد: ${money(result.balanceJod)} د.أ`);
+      setAdjustCaptain(null);
+      setAdjustOpen(false);
+      setAdjustAction("credit");
+      await refresh(token);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تنفيذ العملية.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function createCaptain(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -679,6 +709,37 @@ export default function AdminHome() {
           <Metric icon={<CircleDollarSign size={20} />} label="شحن رصيد للكابتن" value="فتح النموذج" color="violet" detail="حسب رقم الهاتف" onClick={() => { setAdjustOpen(true); setAdjustCaptain(null); }} />
           <Metric icon={<BadgeCheck size={20} />} label="حالة التكامل" value="Green API" color="green" detail="ربط مجموعة واتساب" />
         </section>
+        <div className="admin-account-shortcuts" style={{ display: "flex", flexWrap: "wrap", gap: 10, margin: "-2px 0 16px" }}>
+          <a className="button primary" href="#captain-account-create"><UserRoundPlus size={16} /> إنشاء حساب كابتن</a>
+          <a className="button ghost" href="#captain-account-requests"><Users size={16} /> طلبات الانضمام ({accountRequests.length})</a>
+        </div>
+        <section className="admin-grid">
+          <article className="panel" id="captain-account-create">
+            <div className="panel-heading"><span className="panel-icon blue"><UserRoundPlus size={19} /></span><div><h2>إنشاء حساب كابتن مباشرة</h2><p>أدخل الاسم ورقم الهاتف لإنشاء الحساب فوراً من الإدارة.</p></div></div>
+            <form className="commission-transfer-form" onSubmit={createCaptain}>
+              <label>اسم الكابتن<input name="fullName" type="text" autoComplete="name" minLength={3} maxLength={100} required /></label>
+              <label>رقم الهاتف<input name="phone" type="tel" inputMode="tel" autoComplete="tel" dir="ltr" minLength={8} maxLength={24} placeholder="079xxxxxxx" required /></label>
+              <button className="button primary" disabled={busy}><UserRoundPlus size={16} /> إنشاء الحساب</button>
+            </form>
+            <p className="hint">كلمة المرور الأولية للحساب الجديد هي <bdi>123456</bdi>، ويُنصح بتغييرها فور تسجيل الدخول.</p>
+          </article>
+          <article className="panel" id="captain-account-requests">
+            <div className="panel-heading"><span className="panel-icon"><Users size={19} /></span><div><h2>طلبات انضمام الكباتن ({accountRequests.length})</h2><p>راجع طلبات الانضمام ووافق لإنشاء الحساب أو ارفض الطلب. تتحدث القائمة تلقائياً.</p></div></div>
+            {accountRequests.length ? accountRequests.map((request) => (
+              <div key={request.id} style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "12px 0", borderBottom: "1px solid var(--line)" }}>
+                <div>
+                  <strong>{request.fullName}</strong>
+                  <div dir="ltr" style={{ textAlign: "right", marginTop: 4 }}><bdi>{request.phone}</bdi></div>
+                  <small className="hint">{new Date(request.createdAt).toLocaleString("ar-JO")}</small>
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button className="button primary" disabled={busy} onClick={() => void reviewCaptainAccountRequest(request.id, "approve")}>موافقة وإنشاء الحساب</button>
+                  <button className="button ghost" disabled={busy} onClick={() => void reviewCaptainAccountRequest(request.id, "reject")}>رفض</button>
+                </div>
+              </div>
+            )) : <p className="hint">لا توجد طلبات إنشاء حساب معلقة حالياً.</p>}
+          </article>
+        </section>
         <section className="admin-grid">
           <article className="panel settings-panel">
             <div className="panel-heading"><span className="panel-icon"><Settings2 size={19} /></span><div><h2>إعدادات الرسوم</h2><p>العمولات التي تخصم تلقائياً على كل خمس وحدات</p></div></div>
@@ -839,9 +900,10 @@ export default function AdminHome() {
                   <div className="adjust-toggle">
                     <button type="button" className={adjustAction === "credit" ? "button small credit" : "button small ghost"} onClick={() => setAdjustAction("credit")}><CircleDollarSign size={14} /> شحن</button>
                     <button type="button" className={adjustAction === "debit" ? "button small debit" : "button small ghost"} onClick={() => setAdjustAction("debit")}><ArrowUpLeft size={14} /> خصم</button>
+                    <button type="button" className={adjustAction === "debit_all" ? "button small debit" : "button small ghost"} disabled={adjustCaptain.balanceJod <= 0} onClick={() => setAdjustAction("debit_all")}><ArrowUpLeft size={14} /> سحب كامل الرصيد</button>
                   </div>
-                  <input name="amount" type="number" min="0.001" step="0.001" placeholder={adjustAction === "credit" ? "قيمة الشحن بالدينار" : "قيمة الخصم بالدينار"} required />
-                  <button className="button primary" disabled={busy}><CircleDollarSign size={16} /> {adjustAction === "credit" ? "اعتماد الشحن" : "اعتماد الخصم"}</button>
+                  {adjustAction !== "debit_all" && <input name="amount" type="number" min="0.001" step="0.001" placeholder={adjustAction === "credit" ? "قيمة الشحن بالدينار" : "قيمة الخصم بالدينار"} required />}
+                  <button className="button primary" disabled={busy}><CircleDollarSign size={16} /> {adjustAction === "credit" ? "اعتماد الشحن" : adjustAction === "debit_all" ? "تأكيد سحب كامل الرصيد" : "اعتماد الخصم"}</button>
                   <button type="button" className="button ghost" onClick={() => setAdjustCaptain(null)}>رجوع</button>
                 </form>
               )}
