@@ -953,7 +953,7 @@ export default function AdminHome() {
               {receiptPreview?.id === request.id && <img className="topup-receipt-preview" src={receiptPreview.url} alt={`وصل الشحن للكابتن ${request.captainName}`} />}
             </article>
           ))}
-          {!topUps.length && <div className="empty">لا توجد طلبات شحن بعد.</div>}
+          {!topUps.length && <div className="empty">لا توجد طلبات شحن معلقة.</div>}
         </div>
       </section>
       <section className="panel activity-panel">

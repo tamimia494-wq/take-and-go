@@ -1073,6 +1073,7 @@ router.post("/captain/topup", requireAuth("captain"), async (req, res) => {
 
 router.get("/admin/topups", requireAuth("admin"), async (_req, res) => {
   const requests = await prisma.topUpRequest.findMany({
+    where: { status: "PENDING" },
     orderBy: { createdAt: "desc" },
     take: 100,
     select: {
