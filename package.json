@@ -5,15 +5,18 @@
   "workspaces": [
     "apps/api",
     "apps/captain",
-    "apps/admin"
+    "apps/admin",
+    "apps/customer"
   ],
   "scripts": {
     "dev:api": "npm run dev --workspace @take-and-go/api",
     "dev:captain": "npm run dev --workspace @take-and-go/captain",
     "dev:admin": "npm run dev --workspace @take-and-go/admin",
+    "dev:customer": "npm run dev --workspace @take-and-go/customer",
     "build:api": "npm run build --workspace @take-and-go/api",
     "build:captain": "npm run build --workspace @take-and-go/captain",
     "build:admin": "npm run build --workspace @take-and-go/admin",
+    "build:customer": "npm run build --workspace @take-and-go/customer",
     "db:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
     "db:migrate": "prisma migrate deploy --schema apps/api/prisma/schema.prisma",
     "db:seed": "tsx apps/api/prisma/seed.ts",

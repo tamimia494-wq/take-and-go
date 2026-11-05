@@ -20,6 +20,11 @@ enum CaptainAccountRequestStatus {
   REJECTED
 }
 
+enum BookingOptionKind {
+  ADDON
+  FIELD
+}
+
 enum TopUpStatus {
   PENDING
   APPROVED
@@ -104,6 +109,70 @@ model AppSettings {
   riderCommissionPerFiveFils Int     @default(750)
   orderCommissionPerFiveFils Int    @default(1000)
   updatedAt                DateTime @updatedAt
+}
+
+model BookingCustomer {
+  id                  String    @id @default(cuid())
+  phone               String    @unique
+  passwordHash        String
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+  createdAt           DateTime  @default(now())
+  bookings            Booking[]
+}
+
+model BookingSettings {
+  id                    String   @id @default("default")
+  basePriceFils         Int      @default(0)
+  rearSeatPriceFils     Int      @default(0)
+  whatsappNumber        String   @default("")
+  updatedAt             DateTime @updatedAt
+}
+
+model BookingLocation {
+  id        String   @id @default(cuid())
+  name      String
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([active, sortOrder])
+}
+
+model BookingOption {
+  id        String            @id @default(cuid())
+  label     String
+  kind      BookingOptionKind @default(ADDON)
+  priceFils Int               @default(0)
+  required  Boolean           @default(false)
+  active    Boolean           @default(true)
+  sortOrder Int               @default(0)
+  createdAt DateTime          @default(now())
+
+  @@index([active, sortOrder])
+}
+
+model Booking {
+  id                     String          @id @default(cuid())
+  customerId             String
+  customerPhone          String
+  pickupLocation         String
+  pickupAddress          String
+  pickupLatitude         Float?
+  pickupLongitude        Float?
+  destinationLocation    String
+  destinationAddress     String
+  destinationLatitude    Float?
+  destinationLongitude   Float?
+  passengerCount         Int
+  rearSeat               Boolean         @default(false)
+  selections             Json
+  totalPriceFils         Int
+  createdAt              DateTime        @default(now())
+  customer               BookingCustomer @relation(fields: [customerId], references: [id])
+
+  @@index([createdAt])
+  @@index([customerId, createdAt])
 }
 
 model LedgerEntry {

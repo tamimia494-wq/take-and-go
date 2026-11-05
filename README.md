@@ -1,12 +1,13 @@
 # Take & Go
 
-منصة عربية لإدارة الكباتن والعمولات، بواجهتين منفصلتين للكابتن والإدارة، وواجهة API مشتركة. يستخدم المشروع PostgreSQL الموجود في Railway للتخزين، وGreen API لربط مجموعة واتساب، وRailway لاستضافة الخدمات.
+منصة عربية لإدارة الحجوزات والكباتن والعمولات، بواجهات منفصلة للعملاء والكباتن والإدارة، وواجهة API مشتركة. يستخدم المشروع PostgreSQL الموجود في Railway للتخزين، وGreen API لربط مجموعة واتساب، وRailway لاستضافة الخدمات.
 
 ## مكونات المشروع
 
+- `apps/customer`: صفحة حجز العميل واختيار المواقع والخدمات وإرسال الطلب المحفوظ إلى واتساب.
 - `apps/captain`: موقع الكابتن (منفصل في النشر).
 - `apps/admin`: لوحة الإدارة (منفصلة في النشر).
-- `apps/api`: المصادقة، الأرصدة، الجرد، الحسابات المالية، Webhook الخاص بـ Green API، والخصم الأسبوعي.
+- `apps/api`: المصادقة، الحجوزات، الأرصدة، الجرد، الحسابات المالية، Webhook الخاص بـ Green API، والخصم الأسبوعي.
 - Railway Postgres: قاعدة البيانات المشتركة بين المواقع والخدمات. استخدم قاعدة المشروع الموجودة ولا تنشئ قاعدة إنتاج إضافية.
 
 ## إنشاء حسابات الكباتن
@@ -33,11 +34,14 @@
 
    ```powershell
    npm run dev:api
+   npm run dev:customer
    npm run dev:captain
    npm run dev:admin
    ```
 
-6. افتح موقع الكابتن على `http://localhost:3001` ولوحة الإدارة على `http://localhost:3002`.
+6. افتح صفحة العملاء على `http://localhost:3000`، وموقع الكابتن على `http://localhost:3001`، ولوحة الإدارة على `http://localhost:3002`. إدارة إعدادات الحجز متاحة من رابط «إدارة الحجوزات» داخل لوحة الإدارة.
+
+تتطلب صفحة العملاء ترحيلاً جديداً لقاعدة البيانات. ينشئ العميل حسابه برقم هاتف أردني وكلمة مرور يختارها (6 أحرف على الأقل)، ويُفعّل الحساب تلقائياً ويدخل إلى الحجز مباشرة. تُخزّن كلمة المرور كـ hash، ويُوقف تسجيل الدخول مؤقتاً بعد خمس محاولات خاطئة. لا يوجد تحقق برسالة SMS في النسخة الحالية؛ لذلك لا تثبت ملكية رقم الهاتف قبل إضافة مزود تحقق مناسب.
 
 ## ربط Green API
 
@@ -57,19 +61,21 @@
 
 ## النشر على Railway
 
-استخدم مشروع Railway الحالي وخدماته الثلاث وقاعدة Postgres المرتبطة به. لا تنشئ مشروعاً أو قاعدة بيانات إنتاج جديدة. اجعل **Root Directory** لكل خدمة `/`:
+استخدم مشروع Railway الحالي وقاعدة Postgres المرتبطة به، وأضف خدمة الواجهة الجديدة للمشروع نفسه. لا تنشئ مشروعاً أو قاعدة بيانات إنتاج جديدة. اجعل **Root Directory** لكل خدمة `/`:
 
 | الخدمة | Build Command | Start Command |
 | --- | --- | --- |
 | API | `npm ci && npm run build --workspace @take-and-go/api` | `npm run start --workspace @take-and-go/api` |
+| Customer | `npm ci && npm run build --workspace @take-and-go/customer` | `npm run start --workspace @take-and-go/customer` |
 | Captain | `npm ci && npm run build --workspace @take-and-go/captain` | `npm run start --workspace @take-and-go/captain` |
 | Admin | `npm ci && npm run build --workspace @take-and-go/admin` | `npm run start --workspace @take-and-go/admin` |
 
-استخدم نطاق Railway مستقلاً لكل خدمة ويب (`captain`, `admin`) ونطاقاً لخدمة API. عيّن **Pre-deploy Command** لخدمة API إلى `npm run db:migrate --workspace @take-and-go/api` حتى تُطبق migrations قبل تشغيل الخدمة، وعيّن المتغيرات التالية:
+استخدم نطاق Railway مستقلاً لكل خدمة ويب (`customer`, `captain`, `admin`) ونطاقاً لخدمة API. عيّن **Pre-deploy Command** لخدمة API إلى `npm run db:migrate --workspace @take-and-go/api` حتى تُطبق migrations قبل تشغيل الخدمة، وعيّن المتغيرات التالية:
 
-- API: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`, `ADMIN_PASSWORD`, `GREEN_API_URL`, `GREEN_API_INSTANCE_ID`, `GREEN_API_TOKEN`, `GREEN_API_GROUP_ID`, `GREEN_API_WEBHOOK_TOKEN`, `CAPTAIN_APP_URL`, `ADMIN_APP_URL`, `TZ=Asia/Amman`.
-- Captain وAdmin: `NEXT_PUBLIC_API_URL=https://<api-domain>/api`.
-- `CAPTAIN_APP_URL` و`ADMIN_APP_URL` في خدمة API يجب أن يطابقا نطاقَي الويب دون `/` في النهاية.
+- API: `DATABASE_URL`, `DIRECT_URL`, `JWT_SECRET`, `ADMIN_PASSWORD`, `GREEN_API_URL`, `GREEN_API_INSTANCE_ID`, `GREEN_API_TOKEN`, `GREEN_API_GROUP_ID`, `GREEN_API_WEBHOOK_TOKEN`, `CUSTOMER_APP_URL`, `CAPTAIN_APP_URL`, `ADMIN_APP_URL`, `TZ=Asia/Amman`.
+- Customer وCaptain وAdmin: `NEXT_PUBLIC_API_URL=https://<api-domain>/api`.
+- `CUSTOMER_APP_URL`, `CAPTAIN_APP_URL`, و`ADMIN_APP_URL` في خدمة API يجب أن تطابق نطاقات الويب دون `/` في النهاية. يمكن وضع أكثر من نطاق مفصولة بفاصلة (مثال: نطاق Railway ونطاق مخصص).
+- في التطوير المحلي، إذا لم يُضبط `NEXT_PUBLIC_API_URL` لصفحة العملاء فإنها تتصل بالمنفذ 4000 على نفس العنوان الذي فُتحت منه الصفحة، فتعمل من الجوال على نفس شبكة الواي فاي.
 - قاعدة Railway Postgres مشتركة؛ لا تضع بيانات الاتصال في إعدادات الواجهتين الأماميتين.
 
 بعد إعداد قاعدة Railway الحالية لأول مرة فقط، شغّل seed مرة واحدة في Railway Shell:

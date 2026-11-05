@@ -1,0 +1,119 @@
+.page {
+  min-height: 100vh;
+  padding: 34px max(4vw, 20px) 55px;
+  color: #e8eef8;
+  background: radial-gradient(ellipse at top, #17243b 0%, #0c1424 58%);
+  font-family: "Alexandria", Tahoma, sans-serif;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  max-width: 1220px;
+  margin: 0 auto 22px;
+}
+
+.header h1 { margin: 0; color: #f4f7fb; font-size: 24px; }
+.header p:not(.eyebrow) { margin: 7px 0 0; color: #aebbd1; font-size: 11px; }
+.eyebrow { margin: 0 0 7px; color: #ffd23f; font-size: 10px; font-weight: 700; }
+.panel {
+  max-width: 1220px;
+  margin: 0 auto 16px;
+  padding: 20px;
+  border: 1px solid #2a3650;
+  border-radius: 14px;
+  background: #182032;
+  box-shadow: 0 14px 34px #0000001f;
+}
+
+.twoColumns { max-width: 1220px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 0 auto 16px; }
+.twoColumns .panel { width: 100%; margin: 0; }
+.panelTitle { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 16px; color: #ffd23f; }
+.panelTitle h2 { margin: 0; color: #f4f7fb; font-size: 14px; }
+.panelTitle p { margin: 5px 0 0; color: #aebbd1; font-size: 9px; line-height: 1.7; }
+.settingsGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
+.settingsGrid label, .optionForm > label:not(.checkboxLabel) { display: grid; gap: 6px; color: #aebbd1; font-size: 9px; }
+.settingsGrid input, .addRow input, .listRow input, .optionForm input:not([type="checkbox"]), .optionRow input, .optionRow select, .optionForm select {
+  min-width: 0;
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid #2e3b57;
+  border-radius: 8px;
+  outline: 0;
+  color: #e8eef8;
+  background: #161f33;
+  font: inherit;
+  font-size: 10px;
+}
+.settingsGrid input:focus, .addRow input:focus, .listRow input:focus, .optionForm input:focus, .optionRow input:focus, .optionRow select:focus { border-color: #f7b500; }
+.settingsGrid input[type="number"], .optionRow input[type="number"] { direction: ltr; text-align: left; }
+.button, .linkButton, .iconButton, .deleteButton, .toggleActive, .toggleOff {
+  min-height: 35px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.button { color: #1c2434; background: linear-gradient(100deg,#ffd23f,#f7b500); }
+.linkButton { color: #d4deec; background: #161f33; border: 1px solid #2e3b57; text-decoration: none; white-space: nowrap; }
+.iconButton { width: 35px; flex: none; color: #1c2434; background: #f7b500; }
+.deleteButton { width: 32px; min-height: 32px; flex: none; color: #ffb3bc; background: #d73c5024; }
+.toggleActive, .toggleOff { min-height: 30px; flex: none; padding: 6px 9px; color: #b6f0d5; background: #30b77b20; }
+.toggleOff { color: #ffdf97; background: #f7b50020; }
+.addRow { display: flex; gap: 8px; margin-bottom: 12px; }
+.list { display: grid; gap: 7px; }
+.listRow { display: flex; align-items: center; gap: 6px; }
+.optionForm { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(95px, .75fr) minmax(90px, .6fr) auto auto; align-items: end; gap: 8px; margin-bottom: 13px; }
+.checkboxLabel { display: flex; align-items: center; gap: 5px; color: #c0cad9; font-size: 9px; white-space: nowrap; }
+.checkboxLabel input { accent-color: #f7b500; }
+.optionRow { display: flex; align-items: center; gap: 7px; min-height: 44px; padding: 6px 8px; border: 1px solid #2a3650; border-radius: 8px; background: #161f33; }
+.optionRow > span { flex: 1; color: #c0cad9; font-size: 9px; }
+.optionName { flex: 1; min-width: 0; padding: 6px 0; overflow: hidden; color: #e8eef8; text-align: right; text-overflow: ellipsis; white-space: nowrap; border: 0; background: none; font: inherit; font-size: 10px; }
+.optionRow > input:first-child { flex: 1; }
+.optionRow select { max-width: 80px; }
+.optionRow input[type="number"] { max-width: 80px; }
+.error, .notice, .message { max-width: 1220px; margin: 0 auto 14px; padding: 11px 14px; border-radius: 8px; font-size: 10px; }
+.error { color: #ffd7da; border: 1px solid #743743; background: #4a2732; }
+.notice { color: #c0f1d8; border: 1px solid #28644e; background: #1e453b; }
+.message { margin-top: 40px; padding: 25px; border: 1px solid #2a3650; background: #182032; text-align: center; }
+.message h1 { color: #f4f7fb; font-size: 19px; }
+.message p { margin: 10px 0 20px; color: #aebbd1; font-size: 11px; }
+.empty { color: #aebbd1; font-size: 10px; }
+.bookings { display: grid; gap: 9px; }
+.booking { padding: 12px; border: 1px solid #2a3650; border-radius: 9px; background: #161f33; }
+.bookingTop, .bookingMeta { display: flex; justify-content: space-between; align-items: center; gap: 9px; }
+.bookingTop strong { color: #f4f7fb; font-size: 10px; }
+.bookingTop > span { color: #ffd23f; font-size: 10px; font-weight: 700; white-space: nowrap; }
+.bookingMeta { flex-wrap: wrap; margin-top: 7px; color: #aebbd1; font-size: 9px; }
+.bookingMeta a { color: #ffd23f; }
+.booking > p { margin: 9px 0 0; color: #c0cad9; font-size: 9px; line-height: 1.8; }
+
+@media (max-width: 850px) {
+  .twoColumns { grid-template-columns: 1fr; }
+  .settingsGrid { grid-template-columns: 1fr 1fr; }
+  .settingsGrid label:last-child { grid-column: 1 / -1; }
+}
+@media (max-width: 600px) {
+  .page { padding: 22px 13px 35px; }
+  .header { align-items: flex-start; }
+  .header h1 { font-size: 19px; }
+  .header p:not(.eyebrow) { max-width: 245px; line-height: 1.7; }
+  .panel { padding: 14px 12px; }
+  .settingsGrid { grid-template-columns: 1fr; }
+  .settingsGrid label:last-child { grid-column: auto; }
+  .optionForm { grid-template-columns: 1fr 1fr; }
+  .optionForm > label:first-child { grid-column: 1 / -1; }
+  .optionForm > button { justify-self: end; }
+  .listRow { flex-wrap: wrap; }
+  .listRow > input { flex: 1 1 100%; }
+  .bookingTop, .bookingMeta { align-items: flex-start; }
+}

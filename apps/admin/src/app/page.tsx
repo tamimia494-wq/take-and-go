@@ -769,6 +769,7 @@ export default function AdminHome() {
         <div className="heading">
           <div><p className="eyebrow">مساحة العمل</p><h1>مرحباً بك في لوحة الإدارة</h1><p className="muted">إدارة الكباتن والأرصدة والرسوم من مكان واحد.</p></div>
           <div className="heading-actions">
+            <a className="button ghost" href="/booking">إدارة الحجوزات</a>
             <button className="button ghost refresh" onClick={() => void refresh(token)}><RefreshCw size={16} /> تحديث البيانات</button>
             <button className="button ghost" onClick={() => setShowPassword((value) => !value)}><KeyRound size={16} /> تغيير كلمة المرور</button>
           </div>

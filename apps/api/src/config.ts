@@ -26,6 +26,7 @@ export const config = {
   excludedAdminPhones: (process.env.GREEN_API_EXCLUDED_PHONES ?? "").split(/[;,\s]+/).filter(Boolean),
   captainAppUrl: process.env.CAPTAIN_APP_URL ?? "http://localhost:3001",
   adminAppUrl: process.env.ADMIN_APP_URL ?? "http://localhost:3002",
+  customerAppUrl: process.env.CUSTOMER_APP_URL ?? "http://localhost:3000",
   timezone: process.env.TZ ?? "Asia/Amman",
   adminContactPhone: process.env.ADMIN_CONTACT_PHONE ?? "0797907580"
 };

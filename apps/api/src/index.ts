@@ -11,7 +11,11 @@ import { router } from "./routes";
 import { enqueueIncomingWebhook, receiveGreenApiWebhook, replayRecentMessages, retryPendingGreenApiWebhooks, sweepUnauthorizedMessages } from "./whatsapp";
 
 const app = express();
-const allowedOrigins = [config.captainAppUrl, config.adminAppUrl];
+// Each *_APP_URL may list several origins separated by commas (e.g. a Railway domain plus a custom domain).
+const allowedOrigins = [config.captainAppUrl, config.adminAppUrl, config.customerAppUrl]
+  .flatMap((value) => value.split(","))
+  .map((value) => value.trim().replace(/\/$/, ""))
+  .filter(Boolean);
 
 app.use(cors({
   origin(origin, callback) {

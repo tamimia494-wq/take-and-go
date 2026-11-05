@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import { LedgerType, Prisma } from "@prisma/client";
 import { Router } from "express";
 import { z } from "zod";
-import { adminLogin, captainLogin, requireAuth } from "./auth";
+import { adminLogin, captainLogin, customerLogin, customerRegister, requireAuth } from "./auth";
 import { repairCommissions, runCommissionAudit } from "./commission-repair";
 import { prisma } from "./db";
 import { commissionUnits } from "./pricing";
@@ -19,6 +19,8 @@ export const router = Router();
 router.get("/health", (_req, res) => res.json({ status: "ok" }));
 router.post("/auth/captain/login", captainLogin);
 router.post("/auth/admin/login", adminLogin);
+router.post("/auth/customer/login", customerLogin);
+router.post("/auth/customer/register", customerRegister);
 
 router.post("/captain/account-requests", async (req, res) => {
   const parsed = z.object({
@@ -1439,4 +1441,304 @@ router.post("/admin/password", requireAuth("admin"), async (req, res) => {
   const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
   await prisma.admin.update({ where: { id: "admin" }, data: { passwordHash } });
   res.json({ ok: true });
+});
+
+router.get("/booking/config", async (_req, res) => {
+  const [settings, locations, options] = await Promise.all([
+    prisma.bookingSettings.upsert({ where: { id: "default" }, create: { id: "default" }, update: {} }),
+    prisma.bookingLocation.findMany({ where: { active: true }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
+    prisma.bookingOption.findMany({ where: { active: true }, orderBy: [{ sortOrder: "asc" }, { label: "asc" }] })
+  ]);
+  res.json({
+    basePriceJod: fromFils(settings.basePriceFils),
+    rearSeatPriceJod: fromFils(settings.rearSeatPriceFils),
+    whatsappNumber: settings.whatsappNumber,
+    locations,
+    options: options.map((option) => ({ ...option, priceJod: fromFils(option.priceFils) }))
+  });
+});
+
+router.post("/customer/bookings", requireAuth("customer"), async (req, res) => {
+  const parsed = z.object({
+    pickupLocationId: z.string().min(1).optional(),
+    pickupLocationName: z.string().trim().min(2).max(120).optional(),
+    pickupAddress: z.string().trim().min(2).max(300),
+    pickupLatitude: z.number().finite().min(-90).max(90).nullable().optional(),
+    pickupLongitude: z.number().finite().min(-180).max(180).nullable().optional(),
+    destinationLocationId: z.string().min(1).optional(),
+    destinationLocationName: z.string().trim().min(2).max(120).optional(),
+    destinationAddress: z.string().trim().min(2).max(300),
+    destinationLatitude: z.number().finite().min(-90).max(90).nullable().optional(),
+    destinationLongitude: z.number().finite().min(-180).max(180).nullable().optional(),
+    passengerCount: z.number().int().min(1).max(7),
+    rearSeat: z.boolean(),
+    selections: z.record(z.union([z.string().trim().max(300), z.boolean()])).default({})
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "تحقق من مواقع الانطلاق والوصول وعدد الركاب والحقول المطلوبة." });
+    return;
+  }
+  if ((parsed.data.pickupLatitude === undefined) !== (parsed.data.pickupLongitude === undefined) ||
+      (parsed.data.destinationLatitude === undefined) !== (parsed.data.destinationLongitude === undefined)) {
+    res.status(400).json({ error: "إحداثيات الموقع غير مكتملة." });
+    return;
+  }
+
+  const [customer, settings] = await Promise.all([
+    prisma.bookingCustomer.findUnique({ where: { id: req.user!.id }, select: { id: true, phone: true } }),
+    prisma.bookingSettings.upsert({ where: { id: "default" }, create: { id: "default" }, update: {} })
+  ]);
+  if (!customer) {
+    res.status(401).json({ error: "انتهت صلاحية تسجيل الدخول. سجّل الدخول مجدداً." });
+    return;
+  }
+  if (!settings.whatsappNumber) {
+    res.status(503).json({ error: "لم تضبط الإدارة رقم واتساب لاستقبال الحجوزات بعد." });
+    return;
+  }
+
+  const [pickup, destination] = await Promise.all([
+    parsed.data.pickupLocationId
+      ? prisma.bookingLocation.findFirst({ where: { id: parsed.data.pickupLocationId, active: true } })
+      : Promise.resolve(null),
+    parsed.data.destinationLocationId
+      ? prisma.bookingLocation.findFirst({ where: { id: parsed.data.destinationLocationId, active: true } })
+      : Promise.resolve(null)
+  ]);
+  if ((parsed.data.pickupLocationId && !pickup) || (parsed.data.destinationLocationId && !destination) ||
+      (!pickup && !parsed.data.pickupLocationName) || (!destination && !parsed.data.destinationLocationName)) {
+    res.status(400).json({ error: "اختر موقعاً متاحاً أو اكتب اسم الموقع يدوياً." });
+    return;
+  }
+
+  const options = await prisma.bookingOption.findMany({ where: { active: true } });
+  const optionIds = Object.keys(parsed.data.selections);
+  if (optionIds.some((id) => !options.some((option) => option.id === id))) {
+    res.status(400).json({ error: "تغيرت خيارات الحجز. حدّث الصفحة ثم حاول مجدداً." });
+    return;
+  }
+  for (const option of options) {
+    const value = parsed.data.selections[option.id];
+    if (option.required && (value === undefined || value === false || value === "")) {
+      res.status(400).json({ error: `الحقل «${option.label}» مطلوب.` });
+      return;
+    }
+    if (option.kind === "ADDON" && value !== undefined && typeof value !== "boolean") {
+      res.status(400).json({ error: "قيمة أحد الخيارات غير صالحة." });
+      return;
+    }
+    if (option.kind === "FIELD" && value !== undefined && typeof value !== "string") {
+      res.status(400).json({ error: "قيمة أحد الحقول غير صالحة." });
+      return;
+    }
+  }
+
+  const totalPriceFils = settings.basePriceFils +
+    (parsed.data.rearSeat ? settings.rearSeatPriceFils : 0) +
+    options.reduce((total, option) => total +
+      (option.kind === "ADDON" && parsed.data.selections[option.id] === true ? option.priceFils : 0), 0);
+  const savedSelections = Object.fromEntries(options
+    .filter((option) => parsed.data.selections[option.id] !== undefined)
+    .map((option) => [option.id, {
+      label: option.label,
+      kind: option.kind,
+      value: parsed.data.selections[option.id]!,
+      priceFils: option.priceFils
+    }]));
+  const booking = await prisma.booking.create({
+    data: {
+      customerId: customer.id,
+      customerPhone: customer.phone,
+      pickupLocation: pickup?.name ?? parsed.data.pickupLocationName!,
+      pickupAddress: parsed.data.pickupAddress,
+      pickupLatitude: parsed.data.pickupLatitude ?? null,
+      pickupLongitude: parsed.data.pickupLongitude ?? null,
+      destinationLocation: destination?.name ?? parsed.data.destinationLocationName!,
+      destinationAddress: parsed.data.destinationAddress,
+      destinationLatitude: parsed.data.destinationLatitude ?? null,
+      destinationLongitude: parsed.data.destinationLongitude ?? null,
+      passengerCount: parsed.data.passengerCount,
+      rearSeat: parsed.data.rearSeat,
+      selections: savedSelections,
+      totalPriceFils
+    }
+  });
+  res.status(201).json({
+    id: booking.id,
+    totalPriceJod: fromFils(booking.totalPriceFils),
+    whatsappNumber: settings.whatsappNumber,
+    createdAt: booking.createdAt
+  });
+});
+
+router.get("/admin/booking/settings", requireAuth("admin"), async (_req, res) => {
+  const settings = await prisma.bookingSettings.upsert({ where: { id: "default" }, create: { id: "default" }, update: {} });
+  res.json({
+    basePriceJod: fromFils(settings.basePriceFils),
+    rearSeatPriceJod: fromFils(settings.rearSeatPriceFils),
+    whatsappNumber: settings.whatsappNumber
+  });
+});
+
+router.get("/admin/booking/config", requireAuth("admin"), async (_req, res) => {
+  const [settings, locations, options] = await Promise.all([
+    prisma.bookingSettings.upsert({ where: { id: "default" }, create: { id: "default" }, update: {} }),
+    prisma.bookingLocation.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }),
+    prisma.bookingOption.findMany({ orderBy: [{ sortOrder: "asc" }, { label: "asc" }] })
+  ]);
+  res.json({
+    settings: {
+      basePriceJod: fromFils(settings.basePriceFils),
+      rearSeatPriceJod: fromFils(settings.rearSeatPriceFils),
+      whatsappNumber: settings.whatsappNumber
+    },
+    locations,
+    options: options.map((option) => ({ ...option, priceJod: fromFils(option.priceFils) }))
+  });
+});
+
+router.put("/admin/booking/settings", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({
+    basePriceJod: z.union([z.string(), z.number()]),
+    rearSeatPriceJod: z.union([z.string(), z.number()]),
+    whatsappNumber: z.string().trim().min(8).max(24)
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "أدخل الأسعار ورقم واتساب صحيحاً." });
+    return;
+  }
+  try {
+    const whatsappNumber = normalizePhone(parsed.data.whatsappNumber);
+    const settings = await prisma.bookingSettings.upsert({
+      where: { id: "default" },
+      create: {
+        id: "default",
+        basePriceFils: toFils(parsed.data.basePriceJod),
+        rearSeatPriceFils: toFils(parsed.data.rearSeatPriceJod),
+        whatsappNumber
+      },
+      update: {
+        basePriceFils: toFils(parsed.data.basePriceJod),
+        rearSeatPriceFils: toFils(parsed.data.rearSeatPriceJod),
+        whatsappNumber
+      }
+    });
+    res.json({
+      basePriceJod: fromFils(settings.basePriceFils),
+      rearSeatPriceJod: fromFils(settings.rearSeatPriceFils),
+      whatsappNumber: settings.whatsappNumber
+    });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "تعذر حفظ إعدادات الحجز." });
+  }
+});
+
+router.post("/admin/booking/locations", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({ name: z.string().trim().min(2).max(120), sortOrder: z.number().int().optional() }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "أدخل اسم موقع صحيحاً." });
+    return;
+  }
+  const location = await prisma.bookingLocation.create({ data: parsed.data });
+  res.status(201).json(location);
+});
+
+router.patch("/admin/booking/locations/:id", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({
+    name: z.string().trim().min(2).max(120),
+    active: z.boolean(),
+    sortOrder: z.number().int()
+  }).safeParse(req.body);
+  const id = req.params.id;
+  if (!parsed.success || typeof id !== "string") {
+    res.status(400).json({ error: "بيانات الموقع غير صالحة." });
+    return;
+  }
+  const location = await prisma.bookingLocation.update({ where: { id }, data: parsed.data });
+  res.json(location);
+});
+
+router.delete("/admin/booking/locations/:id", requireAuth("admin"), async (req, res) => {
+  const id = req.params.id;
+  if (typeof id !== "string") {
+    res.status(400).json({ error: "معرّف الموقع غير صالح." });
+    return;
+  }
+  await prisma.bookingLocation.delete({ where: { id } });
+  res.json({ ok: true });
+});
+
+const bookingOptionInput = z.object({
+  label: z.string().trim().min(2).max(120),
+  kind: z.enum(["ADDON", "FIELD"]),
+  priceJod: z.union([z.string(), z.number()]),
+  required: z.boolean(),
+  active: z.boolean().optional(),
+  sortOrder: z.number().int().optional()
+});
+
+router.post("/admin/booking/options", requireAuth("admin"), async (req, res) => {
+  const parsed = bookingOptionInput.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "بيانات الخيار غير صالحة." });
+    return;
+  }
+  try {
+    const option = await prisma.bookingOption.create({
+      data: {
+        label: parsed.data.label,
+        kind: parsed.data.kind,
+        priceFils: toFils(parsed.data.priceJod),
+        required: parsed.data.required,
+        active: parsed.data.active ?? true,
+        sortOrder: parsed.data.sortOrder ?? 0
+      }
+    });
+    res.status(201).json({ ...option, priceJod: fromFils(option.priceFils) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "تعذر حفظ الخيار." });
+  }
+});
+
+router.patch("/admin/booking/options/:id", requireAuth("admin"), async (req, res) => {
+  const parsed = bookingOptionInput.safeParse(req.body);
+  const id = req.params.id;
+  if (!parsed.success || typeof id !== "string") {
+    res.status(400).json({ error: "بيانات الخيار غير صالحة." });
+    return;
+  }
+  try {
+    const option = await prisma.bookingOption.update({
+      where: { id },
+      data: {
+        label: parsed.data.label,
+        kind: parsed.data.kind,
+        priceFils: toFils(parsed.data.priceJod),
+        required: parsed.data.required,
+        active: parsed.data.active ?? true,
+        sortOrder: parsed.data.sortOrder ?? 0
+      }
+    });
+    res.json({ ...option, priceJod: fromFils(option.priceFils) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "تعذر تحديث الخيار." });
+  }
+});
+
+router.delete("/admin/booking/options/:id", requireAuth("admin"), async (req, res) => {
+  const id = req.params.id;
+  if (typeof id !== "string") {
+    res.status(400).json({ error: "معرّف الخيار غير صالح." });
+    return;
+  }
+  await prisma.bookingOption.delete({ where: { id } });
+  res.json({ ok: true });
+});
+
+router.get("/admin/bookings", requireAuth("admin"), async (_req, res) => {
+  const bookings = await prisma.booking.findMany({ orderBy: { createdAt: "desc" }, take: 200 });
+  res.json(bookings.map((booking) => ({
+    ...booking,
+    totalPriceJod: fromFils(booking.totalPriceFils)
+  })));
 });
