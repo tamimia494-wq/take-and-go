@@ -198,10 +198,12 @@ router.get("/admin/dashboard", requireAuth("admin"), async (_req, res) => {
     prisma.captain.count({ where: { status: "ACTIVE" } }),
     prisma.captain.aggregate({ _sum: { balanceFils: true } }),
     prisma.appSettings.findUniqueOrThrow({ where: { id: "default" } }),
+    // Every ledger movement of the last 24 hours, capped so a very busy day cannot bloat the dashboard.
     prisma.ledgerEntry.findMany({
+      where: { createdAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
       include: { captain: { select: { fullName: true, phone: true } } },
       orderBy: { createdAt: "desc" },
-      take: 8
+      take: 1000
     })
   ]);
   res.json({

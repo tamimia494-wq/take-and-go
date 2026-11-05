@@ -1040,7 +1040,7 @@ export default function AdminHome() {
           </>}
         </section>
         <section className="panel activity-panel">
-          <div className="panel-heading compact"><span className="panel-icon"><ArrowDownLeft size={19} /></span><div><h2>آخر الحركات المالية</h2><p>سجل الشحنات والخصومات المعتمدة</p></div></div>
+          <div className="panel-heading compact"><span className="panel-icon"><ArrowDownLeft size={19} /></span><div><h2>حركات الجرد آخر 24 ساعة</h2><p>كل الشحنات والخصومات والعمولات خلال آخر 24 ساعة</p></div></div>
           <button type="button" className="button ghost full" aria-expanded={showActivity} onClick={() => setShowActivity((open) => !open)}>{showActivity ? "إخفاء الحركات" : `عرض الحركات (${overview?.latestActivity.length ?? 0})`}</button>
           {showActivity && <div className="activity-list">{overview?.latestActivity.map((entry) => (
             <article key={entry.id} className="activity-row"><span className={`activity-symbol ${entry.amountJod >= 0 ? "in" : "out"}`}>{entry.amountJod >= 0 ? <ArrowDownLeft size={17} /> : <ArrowUpLeft size={17} />}</span><div className="activity-copy"><strong>{entry.description}</strong><span>{entry.captain.fullName ?? entry.captain.phone} · {new Intl.DateTimeFormat("ar-JO", { dateStyle: "medium", timeStyle: "short" }).format(new Date(entry.createdAt))}</span></div><b className={entry.amountJod >= 0 ? "positive" : "negative"}>{entry.amountJod > 0 ? "+" : ""}{money(entry.amountJod)} د.أ</b></article>
