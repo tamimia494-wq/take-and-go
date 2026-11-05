@@ -62,7 +62,12 @@ async function request<T>(path: string, token?: string, init: RequestInit = {}):
       }
     });
   } catch (reason) {
-    if (reason instanceof TypeError) throw new Error("تعذر الاتصال بخدمة الحجز. تحقق من الاتصال ثم أعد المحاولة.");
+    if (reason instanceof TypeError) {
+      const cause = typeof navigator !== "undefined" && !navigator.onLine
+        ? "لا يوجد اتصال بالإنترنت على هذا الجهاز"
+        : `الخادم لم يرد (${apiBase()}) — ${reason.message}`;
+      throw new Error(`تعذر الاتصال بخدمة الحجز. السبب: ${cause}. تحقق من الاتصال ثم أعد المحاولة.`);
+    }
     throw reason;
   }
   const body = await response.text();
