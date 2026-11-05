@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowRight, Check, MapPin, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowRight, Check, MapPin, Plus, Save, Trash2, Users } from "lucide-react";
 import styles from "./booking.module.css";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
@@ -27,6 +27,12 @@ type Booking = {
   createdAt: string;
 };
 type BookingAdminData = { settings: Settings; locations: Location[]; options: Option[] };
+type Customer = { id: string; phone: string; createdAt: string; lockedUntil: string | null; bookingCount: number };
+
+/** 962791234567 → 0791234567 */
+function localPhone(phone: string): string {
+  return phone.startsWith("962") ? `0${phone.slice(3)}` : phone;
+}
 
 async function api<T>(path: string, token: string, method = "GET", data?: unknown): Promise<T> {
   const response = await fetch(`${API}${path}`, {
@@ -53,6 +59,8 @@ export default function BookingAdminPage() {
   const [token, setToken] = useState("");
   const [data, setData] = useState<BookingAdminData | null>(null);
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customerSearch, setCustomerSearch] = useState("");
   const [settings, setSettings] = useState<Settings>({ basePriceJod: 0, rearSeatPriceJod: 0, whatsappNumber: "" });
   const [locationName, setLocationName] = useState("");
   const [option, setOption] = useState({ label: "", kind: "ADDON" as "ADDON" | "FIELD", priceJod: "0", required: false });
@@ -62,14 +70,28 @@ export default function BookingAdminPage() {
   const [notice, setNotice] = useState("");
 
   const refresh = useCallback(async (authToken: string) => {
-    const [config, bookingList] = await Promise.all([
+    const [config, bookingList, customerList] = await Promise.all([
       api<BookingAdminData>("/admin/booking/config", authToken),
-      api<Booking[]>("/admin/bookings", authToken)
+      api<Booking[]>("/admin/bookings", authToken),
+      api<Customer[]>("/admin/booking/customers", authToken)
     ]);
     setData(config);
     setSettings(config.settings);
     setBookings(bookingList);
+    setCustomers(customerList);
   }, []);
+
+  function deleteCustomer(customer: Customer) {
+    const phone = localPhone(customer.phone);
+    const warning = customer.bookingCount > 0
+      ? `حذف حساب ${phone} نهائياً مع ${customer.bookingCount} من طلبات الحجز الخاصة به؟ لا يمكن التراجع.`
+      : `حذف حساب ${phone} نهائياً؟ يستطيع صاحب الرقم إنشاء حساب جديد بعدها.`;
+    if (!window.confirm(warning)) return;
+    void perform(async () => { await api(`/admin/booking/customers/${customer.id}`, token, "DELETE"); }, `تم حذف حساب ${phone}. يستطيع صاحبه إنشاء حساب جديد الآن.`);
+  }
+
+  const searchDigits = customerSearch.replace(/\D/g, "").replace(/^0/, "");
+  const visibleCustomers = searchDigits ? customers.filter((customer) => customer.phone.includes(searchDigits)) : customers;
 
   useEffect(() => {
     const stored = window.localStorage.getItem("take-go-admin-token");
@@ -201,6 +223,20 @@ export default function BookingAdminPage() {
               </>}
             </div>)}</div>
           </article>
+        </section>
+
+        <section className={styles.panel}>
+          <div className={styles.panelTitle}><div><h2>حسابات العملاء ({customers.length})</h2><p>كلمات المرور محفوظة مشفّرة ولا يمكن عرضها. إذا نسي العميل كلمة المرور احذف حسابه ليُنشئ حساباً جديداً بنفس الرقم.</p></div><Users size={20} /></div>
+          <div className={styles.addRow}><input type="search" dir="ltr" value={customerSearch} onChange={(event) => setCustomerSearch(event.target.value)} placeholder="ابحث برقم الهاتف 07xxxxxxxx" aria-label="ابحث برقم الهاتف" /></div>
+          {visibleCustomers.length === 0 ? <p className={styles.empty}>{customers.length === 0 ? "لا توجد حسابات عملاء حتى الآن." : "لا يوجد حساب بهذا الرقم."}</p> : <div className={styles.list}>{visibleCustomers.map((customer) => (
+            <div className={styles.customerRow} key={customer.id}>
+              <bdi className={styles.customerPhone}>{localPhone(customer.phone)}</bdi>
+              <span>{customer.bookingCount} طلب</span>
+              <span>{new Date(customer.createdAt).toLocaleDateString("ar-JO")}</span>
+              {customer.lockedUntil && new Date(customer.lockedUntil) > new Date() && <span className={styles.lockedTag}>مقفل مؤقتاً</span>}
+              <button className={styles.deleteButton} disabled={busy} onClick={() => deleteCustomer(customer)} aria-label={`حذف حساب ${localPhone(customer.phone)}`}><Trash2 size={15} /></button>
+            </div>
+          ))}</div>}
         </section>
 
         <section className={styles.panel}>

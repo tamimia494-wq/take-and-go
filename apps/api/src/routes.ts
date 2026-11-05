@@ -1735,6 +1735,38 @@ router.delete("/admin/booking/options/:id", requireAuth("admin"), async (req, re
   res.json({ ok: true });
 });
 
+router.get("/admin/booking/customers", requireAuth("admin"), async (req, res) => {
+  const search = typeof req.query.phone === "string" ? req.query.phone.replace(/\D/g, "") : "";
+  const customers = await prisma.bookingCustomer.findMany({
+    where: search ? { phone: { contains: search.replace(/^0/, "") } } : undefined,
+    orderBy: { createdAt: "desc" },
+    take: 200,
+    select: { id: true, phone: true, createdAt: true, lockedUntil: true, _count: { select: { bookings: true } } }
+  });
+  res.json(customers.map(({ _count, ...customer }) => ({ ...customer, bookingCount: _count.bookings })));
+});
+
+// Deletes the account and its bookings so the phone number can sign up again.
+router.delete("/admin/booking/customers/:id", requireAuth("admin"), async (req, res) => {
+  const id = req.params.id;
+  if (typeof id !== "string") {
+    res.status(400).json({ error: "معرّف الحساب غير صالح." });
+    return;
+  }
+  const deleted = await prisma.$transaction(async (tx) => {
+    const customer = await tx.bookingCustomer.findUnique({ where: { id }, select: { id: true } });
+    if (!customer) return null;
+    const bookings = await tx.booking.deleteMany({ where: { customerId: id } });
+    await tx.bookingCustomer.delete({ where: { id } });
+    return { bookings: bookings.count };
+  });
+  if (!deleted) {
+    res.status(404).json({ error: "الحساب غير موجود أو حُذف مسبقاً." });
+    return;
+  }
+  res.json({ ok: true, deletedBookings: deleted.bookings });
+});
+
 router.get("/admin/bookings", requireAuth("admin"), async (_req, res) => {
   const bookings = await prisma.booking.findMany({ orderBy: { createdAt: "desc" }, take: 200 });
   res.json(bookings.map((booking) => ({
