@@ -1193,6 +1193,144 @@ router.post("/admin/topups/:id/reject", requireAuth("admin"), async (req, res) =
   }
 });
 
+// ==== طلبات سحب الرصيد ====
+/** What a captain can still ask to withdraw: their balance minus withdrawals already waiting for review. */
+async function availableToWithdrawFils(captainId: string): Promise<{ balanceFils: number; pendingFils: number; availableFils: number }> {
+  const [captain, pending] = await Promise.all([
+    prisma.captain.findUniqueOrThrow({ where: { id: captainId }, select: { balanceFils: true } }),
+    prisma.withdrawalRequest.aggregate({ where: { captainId, status: "PENDING" }, _sum: { amountFils: true } })
+  ]);
+  const pendingFils = pending._sum.amountFils ?? 0;
+  return { balanceFils: captain.balanceFils, pendingFils, availableFils: Math.max(0, captain.balanceFils - pendingFils) };
+}
+
+router.get("/captain/withdrawal", requireAuth("captain"), async (req, res) => {
+  const { balanceFils, pendingFils, availableFils } = await availableToWithdrawFils(req.user!.id);
+  res.json({ balanceJod: fromFils(balanceFils), pendingJod: fromFils(pendingFils), availableJod: fromFils(availableFils) });
+});
+
+router.post("/captain/withdrawal", requireAuth("captain"), async (req, res) => {
+  const parsed = z.object({ amount: z.union([z.string(), z.number()]) }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "أدخل مبلغ السحب." });
+    return;
+  }
+  let amountFils: number;
+  try {
+    amountFils = toFils(parsed.data.amount);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "المبلغ غير صالح." });
+    return;
+  }
+  if (amountFils <= 0) {
+    res.status(400).json({ error: "يجب أن يكون مبلغ السحب أكبر من صفر." });
+    return;
+  }
+  // Serializable, so two requests sent together cannot both pass the available-balance check.
+  try {
+    const created = await prisma.$transaction(async (tx) => {
+      const [captain, pending] = await Promise.all([
+        tx.captain.findUniqueOrThrow({ where: { id: req.user!.id }, select: { balanceFils: true } }),
+        tx.withdrawalRequest.aggregate({ where: { captainId: req.user!.id, status: "PENDING" }, _sum: { amountFils: true } })
+      ]);
+      const availableFils = Math.max(0, captain.balanceFils - (pending._sum.amountFils ?? 0));
+      if (amountFils > availableFils) {
+        throw new Error(availableFils > 0
+          ? `المبلغ أكبر من الرصيد المتاح للسحب (${fromFils(availableFils)} د.أ).`
+          : "لا يوجد رصيد متاح للسحب.");
+      }
+      return tx.withdrawalRequest.create({ data: { captainId: req.user!.id, amountFils } });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    res.json({ id: created.id, amountJod: fromFils(amountFils) });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
+      res.status(409).json({ error: "تغير الرصيد أثناء إرسال الطلب. أعد المحاولة." });
+      return;
+    }
+    res.status(400).json({ error: error instanceof Error ? error.message : "تعذر إرسال طلب السحب." });
+  }
+});
+
+router.get("/admin/withdrawals", requireAuth("admin"), async (_req, res) => {
+  const requests = await prisma.withdrawalRequest.findMany({
+    where: { status: "PENDING" },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    select: {
+      id: true,
+      amountFils: true,
+      createdAt: true,
+      captain: { select: { fullName: true, phone: true, balanceFils: true } }
+    }
+  });
+  res.json(requests.map((request) => ({
+    id: request.id,
+    captainName: request.captain.fullName ?? request.captain.phone,
+    captainPhone: request.captain.phone,
+    amountJod: fromFils(request.amountFils),
+    balanceJod: fromFils(request.captain.balanceFils),
+    createdAt: request.createdAt
+  })));
+});
+
+router.post("/admin/withdrawals/:id/approve", requireAuth("admin"), async (req, res) => {
+  const id = typeof req.params.id === "string" ? req.params.id : undefined;
+  if (!id) {
+    res.status(400).json({ error: "معرّف غير صالح." });
+    return;
+  }
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const request = await tx.withdrawalRequest.findUnique({ where: { id } });
+      if (!request) throw new Error("طلب السحب غير موجود.");
+      const claimed = await tx.withdrawalRequest.updateMany({
+        where: { id, status: "PENDING" },
+        data: { status: "APPROVED", reviewedAt: new Date() }
+      });
+      if (claimed.count !== 1) throw new Error("تمت معالجة الطلب مسبقاً.");
+      // The balance never goes below zero; the throw also undoes the approval above.
+      const debited = await tx.captain.updateMany({
+        where: { id: request.captainId, balanceFils: { gte: request.amountFils } },
+        data: { balanceFils: { decrement: request.amountFils } }
+      });
+      if (debited.count !== 1) throw new Error("رصيد الكابتن الحالي أقل من المبلغ المطلوب سحبه.");
+      const updated = await tx.captain.findUniqueOrThrow({ where: { id: request.captainId } });
+      await tx.ledgerEntry.create({
+        data: {
+          captainId: request.captainId,
+          type: LedgerType.ADJUSTMENT,
+          amountFils: -request.amountFils,
+          balanceAfterFils: updated.balanceFils,
+          description: "سحب رصيد",
+          reference: `withdrawal:${request.id}`,
+          idempotencyKey: `withdrawal:${request.id}`
+        }
+      });
+      return updated;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    res.json({ balanceJod: fromFils(result.balanceFils) });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "تعذر اعتماد طلب السحب." });
+  }
+});
+
+router.post("/admin/withdrawals/:id/reject", requireAuth("admin"), async (req, res) => {
+  const id = typeof req.params.id === "string" ? req.params.id : undefined;
+  if (!id) {
+    res.status(400).json({ error: "معرّف غير صالح." });
+    return;
+  }
+  const rejected = await prisma.withdrawalRequest.updateMany({
+    where: { id, status: "PENDING" },
+    data: { status: "REJECTED", reviewedAt: new Date() }
+  });
+  if (rejected.count !== 1) {
+    res.status(400).json({ error: "تمت معالجة الطلب مسبقاً أو غير موجود." });
+    return;
+  }
+  res.json({ ok: true });
+});
+
 // ==== طرق الدفع ====
 router.get("/payment-methods", async (_req, res) => {
   const methods = await prisma.paymentMethod.findMany({ orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }] });

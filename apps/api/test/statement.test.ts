@@ -66,6 +66,15 @@ test("separates top-ups, bonuses, withdrawals (old positive and new negative) an
   assert.equal(statement.spentFils, 800);
 });
 
+test("counts approved withdrawal requests and full-balance withdrawals as withdrawals", () => {
+  const statement = buildStatement([
+    entry({ type: "ADJUSTMENT", amountFils: -2000, description: "سحب رصيد", reference: "withdrawal:w1" }),
+    entry({ type: "ADJUSTMENT", amountFils: -1500, description: "سحب كامل الرصيد" })
+  ], 3500);
+  assert.equal(statement.withdrawalsFils, 3500);
+  assert.equal(statement.consumed.totalFils, 0);
+});
+
 test("net profit is top-ups plus group floors minus withdrawals", () => {
   const statement = buildStatement([
     entry({ type: "CREDIT", amountFils: 10000, description: "شحن رصيد" }),

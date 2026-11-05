@@ -75,6 +75,7 @@ model Captain {
   ledgerEntries  LedgerEntry[]
   replies        WhatsAppReply[]
   topUpRequests  TopUpRequest[]
+  withdrawalRequests WithdrawalRequest[]
 }
 
 model CaptainAccountRequest {
@@ -178,6 +179,18 @@ model PaymentMethod {
   details     String
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
+}
+
+model WithdrawalRequest {
+  id          String       @id @default(cuid())
+  captainId   String
+  amountFils  Int
+  status      TopUpStatus  @default(PENDING)
+  createdAt   DateTime     @default(now())
+  reviewedAt  DateTime?
+  captain     Captain      @relation(fields: [captainId], references: [id])
+
+  @@index([status, createdAt])
 }
 
 model TopUpRequest {

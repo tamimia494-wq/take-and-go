@@ -41,8 +41,13 @@ function emptySide(): CommissionSide {
   return { riderJobs: 0, orderJobs: 0, riderFils: 0, orderFils: 0, refundedFils: 0, transferredFils: 0, totalFils: 0 };
 }
 
-function isWithdrawal(entry: StatementEntry): boolean {
-  return entry.type === "ADJUSTMENT" && entry.reference === null && entry.description === "خصم رصيد";
+const ADMIN_WITHDRAWAL_DESCRIPTIONS = new Set(["خصم رصيد", "سحب كامل الرصيد", "سحب رصيد"]);
+
+/** Money paid out of a balance: an approved withdrawal request, or an admin's "خصم رصيد" / "سحب كامل الرصيد". */
+export function isWithdrawal(entry: Pick<StatementEntry, "type" | "reference" | "description">): boolean {
+  if (entry.type !== "ADJUSTMENT") return false;
+  if (entry.reference?.startsWith("withdrawal:")) return true;
+  return entry.reference === null && ADMIN_WITHDRAWAL_DESCRIPTIONS.has(entry.description);
 }
 
 function isBonus(entry: StatementEntry): boolean {

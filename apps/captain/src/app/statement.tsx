@@ -181,11 +181,17 @@ function SideTable({ side }: { side: CommissionSide }) {
   );
 }
 
+const WITHDRAWAL_DESCRIPTIONS = new Set(["خصم رصيد", "سحب كامل الرصيد", "سحب رصيد"]);
+
+function isWithdrawalEntry(entry: StatementTransaction): boolean {
+  if (entry.type !== "ADJUSTMENT") return false;
+  if (entry.reference?.startsWith("withdrawal:")) return true;
+  return entry.reference === null && WITHDRAWAL_DESCRIPTIONS.has(entry.description);
+}
+
 function transactionAmount(entry: StatementTransaction): number {
   // Older manual withdrawals were recorded as positive amounts despite reducing the balance.
-  return entry.type === "ADJUSTMENT" && entry.description === "خصم رصيد"
-    ? -Math.abs(entry.amountFils)
-    : entry.amountFils;
+  return isWithdrawalEntry(entry) ? -Math.abs(entry.amountFils) : entry.amountFils;
 }
 
 function transactionLabel(entry: StatementTransaction): string {
@@ -194,7 +200,7 @@ function transactionLabel(entry: StatementTransaction): string {
   if (entry.type === "RIDER_COMMISSION") return entry.amountFils < 0 ? "استهلاك ركاب" : "إنتاج ركاب";
   if (entry.type === "ORDER_COMMISSION") return entry.amountFils < 0 ? "استهلاك أوردرات" : "إنتاج أوردرات";
   if (entry.type === "GROUP_FLOOR") return "استهلاك · أرضية الجروب";
-  if (entry.type === "ADJUSTMENT" && entry.description === "خصم رصيد") return "سحب رصيد";
+  if (isWithdrawalEntry(entry)) return "سحب رصيد";
   if (entry.type === "ADJUSTMENT" && entry.reference?.startsWith("commission-transfer:")) {
     return entry.amountFils < 0 ? "استهلاك · تحويل عمولة" : "إنتاج · تحويل عمولة";
   }

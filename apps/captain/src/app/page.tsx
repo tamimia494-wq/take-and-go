@@ -66,6 +66,8 @@ export default function CaptainHome() {
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [topUpOpen, setTopUpOpen] = useState(false);
+  const [withdrawalOpen, setWithdrawalOpen] = useState(false);
+  const [withdrawal, setWithdrawal] = useState<{ balanceJod: number; pendingJod: number; availableJod: number } | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showLedger, setShowLedger] = useState(false);
   const [notice, setNotice] = useState("");
@@ -127,6 +129,42 @@ export default function CaptainHome() {
       setTimeout(() => setCopiedId((current) => (current === method.id ? null : current)), 2000);
     } catch {
       setCopiedId(null);
+    }
+  }
+
+  async function openWithdrawal() {
+    setNotice("");
+    setTopUpOpen(false);
+    if (withdrawalOpen) {
+      setWithdrawalOpen(false);
+      return;
+    }
+    try {
+      setWithdrawal(await api<{ balanceJod: number; pendingJod: number; availableJod: number }>("/captain/withdrawal", token));
+      setWithdrawalOpen(true);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تحميل الرصيد المتاح للسحب.");
+    }
+  }
+
+  async function submitWithdrawal(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    const form = event.currentTarget;
+    const amount = new FormData(form).get("amount");
+    try {
+      const result = await api<{ id: string; amountJod: number }>(
+        "/captain/withdrawal", token, { method: "POST", body: JSON.stringify({ amount }) }
+      );
+      setNotice(`تم إرسال طلب سحب بمبلغ ${result.amountJod} د.أ إلى الإدارة، وسيُسحب من رصيدك بعد اعتماده.`);
+      setWithdrawalOpen(false);
+      form.reset();
+      await loadDashboard(token);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر إرسال طلب السحب.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -420,15 +458,42 @@ export default function CaptainHome() {
           <span className="balance-footnote">يتم تحديث الرصيد بعد اعتماد الطلبات</span>
           <div className="balance-decoration">T</div>
         </section>
-        <button
-          type="button"
-          className="topup-button"
-          aria-expanded={topUpOpen}
-          aria-controls="topup-form"
-          onClick={() => { setTopUpOpen((open) => !open); setNotice(""); }}
-        >
-          <CircleDollarSign size={18} /> {topUpOpen ? "إغلاق نموذج الشحن" : "شحن رصيد"}
-        </button>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <button
+            type="button"
+            className="topup-button"
+            aria-expanded={topUpOpen}
+            aria-controls="topup-form"
+            onClick={() => { setTopUpOpen((open) => !open); setWithdrawalOpen(false); setNotice(""); }}
+          >
+            <CircleDollarSign size={18} /> {topUpOpen ? "إغلاق الشحن" : "شحن رصيد"}
+          </button>
+          <button
+            type="button"
+            className="topup-button"
+            aria-expanded={withdrawalOpen}
+            aria-controls="withdrawal-form"
+            onClick={() => void openWithdrawal()}
+          >
+            <ArrowDownLeft size={18} /> {withdrawalOpen ? "إغلاق السحب" : "سحب رصيد"}
+          </button>
+        </div>
+        {withdrawalOpen && withdrawal && (
+          <form id="withdrawal-form" className="topup-card" onSubmit={submitWithdrawal}>
+            <strong>طلب سحب رصيد</strong>
+            <span>
+              المتاح للسحب: {money(withdrawal.availableJod)} د.أ
+              {withdrawal.pendingJod > 0 ? ` (عندك طلبات سحب قيد المراجعة بمبلغ ${money(withdrawal.pendingJod)} د.أ)` : ""}.
+              يُسحب المبلغ من رصيدك بعد اعتماد الإدارة.
+            </span>
+            {withdrawal.availableJod > 0 ? (
+              <>
+                <input name="amount" type="number" min="0.001" max={withdrawal.availableJod} step="0.001" placeholder={`المبلغ من 0.001 إلى ${withdrawal.availableJod} د.أ`} required />
+                <button className="primary-button" disabled={busy}>{busy ? "جارٍ الإرسال..." : "إرسال طلب السحب للإدارة"} <ArrowUpLeft size={18} /></button>
+              </>
+            ) : <span>لا يوجد رصيد متاح للسحب حالياً.</span>}
+          </form>
+        )}
         {topUpOpen && (
           <form id="topup-form" className="topup-card" onSubmit={submitTopUp}>
             <strong>طلب شحن رصيد</strong>

@@ -11,6 +11,7 @@ type Settings = { groupFloorJod: number; riderCommissionPerFiveJod: number; orde
 type Captain = { id: string; phone: string; fullName: string | null; status: "ACTIVE" | "PENDING_PROFILE" | "SUSPENDED"; balanceJod: number; createdAt: string };
 type Activity = { id: string; description: string; type: string; amountJod: number; createdAt: string; captain: { fullName: string | null; phone: string } };
 type PaymentMethod = { id: string; label: string; details: string };
+type WithdrawalRequest = { id: string; captainName: string; captainPhone: string; amountJod: number; balanceJod: number; createdAt: string };
 type TopUpRequest = { id: string; captainName: string; captainPhone: string; amountJod: number; hasReceipt: boolean; status: string; createdAt: string };
 type CaptainAccountRequest = { id: string; fullName: string; phone: string; createdAt: string };
 type Overview = { captainCount: number; activeCaptainCount: number; totalBalanceJod: number; settings: Settings; latestActivity: Activity[] };
@@ -72,6 +73,7 @@ export default function AdminHome() {
   const [showActivity, setShowActivity] = useState(false);
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [topUps, setTopUps] = useState<TopUpRequest[]>([]);
+  const [withdrawals, setWithdrawals] = useState<WithdrawalRequest[]>([]);
   const [accountRequests, setAccountRequests] = useState<CaptainAccountRequest[]>([]);
   const [receiptPreview, setReceiptPreview] = useState<{ id: string; url: string } | null>(null);
   const [commissionAudit, setCommissionAudit] = useState<CommissionAudit | null>(null);
@@ -86,12 +88,13 @@ export default function AdminHome() {
   const transferRequest = useRef<{ fingerprint: string; requestId: string } | null>(null);
 
   const refresh = useCallback(async (authToken: string) => {
-    const [home, list, methods, topUpList, requestList] = await Promise.all([
+    const [home, list, methods, topUpList, requestList, withdrawalList] = await Promise.all([
       api<Overview>("/admin/dashboard", authToken),
       api<Captain[]>("/admin/captains", authToken),
       api<PaymentMethod[]>("/payment-methods", ""),
       api<TopUpRequest[]>("/admin/topups", authToken),
-      api<CaptainAccountRequest[]>("/admin/captain-account-requests", authToken)
+      api<CaptainAccountRequest[]>("/admin/captain-account-requests", authToken),
+      api<WithdrawalRequest[]>("/admin/withdrawals", authToken)
     ]);
     setOverview(home);
     setSettings(home.settings);
@@ -99,6 +102,7 @@ export default function AdminHome() {
     setPaymentMethods(methods);
     setTopUps(topUpList);
     setAccountRequests(requestList);
+    setWithdrawals(withdrawalList);
   }, []);
 
   useEffect(() => {
@@ -124,6 +128,9 @@ export default function AdminHome() {
       void api<CaptainAccountRequest[]>("/admin/captain-account-requests", token)
         .then(setAccountRequests)
         .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "تعذر تحديث طلبات الحسابات."));
+      void api<WithdrawalRequest[]>("/admin/withdrawals", token)
+        .then(setWithdrawals)
+        .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "تعذر تحديث طلبات السحب."));
     }, 15000);
     return () => window.clearInterval(interval);
   }, [token]);
@@ -563,6 +570,23 @@ export default function AdminHome() {
     }
   }
 
+  async function reviewWithdrawal(request: WithdrawalRequest, approve: boolean) {
+    if (approve && !window.confirm(`اعتماد سحب ${money(request.amountJod)} د.أ من رصيد ${request.captainName}؟`)) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api(`/admin/withdrawals/${request.id}/${approve ? "approve" : "reject"}`, token, { method: "POST" });
+      setNotice(approve
+        ? `تم اعتماد طلب السحب وسحب ${money(request.amountJod)} د.أ من رصيد ${request.captainName}.`
+        : "تم رفض طلب السحب.");
+      await refresh(token);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر معالجة طلب السحب.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function reviewTopUp(id: string, approve: boolean) {
     setBusy(true);
     setError("");
@@ -930,6 +954,24 @@ export default function AdminHome() {
             </article>
           ))}
           {!topUps.length && <div className="empty">لا توجد طلبات شحن معلقة.</div>}
+        </div>
+      </section>
+      <section className="panel activity-panel">
+        <div className="panel-heading compact"><span className="panel-icon violet"><ArrowUpLeft size={19} /></span><div><h2>طلبات سحب الرصيد</h2><p>عند الاعتماد يُسحب المبلغ من رصيد الكابتن</p></div></div>
+        <div className="topup-admin-list">
+          {withdrawals.map((request) => (
+            <article key={request.id} className="topup-admin-row">
+              <div>
+                <strong>{request.captainName} · <span dir="ltr">{request.captainPhone}</span></strong>
+                <span>يطلب سحب {money(request.amountJod)} د.أ · رصيده الحالي {money(request.balanceJod)} د.أ · {new Intl.DateTimeFormat("ar-JO", { dateStyle: "short", timeStyle: "short" }).format(new Date(request.createdAt))}</span>
+              </div>
+              <div className="row-actions">
+                <button className="button small credit" disabled={busy || request.balanceJod < request.amountJod} onClick={() => void reviewWithdrawal(request, true)}>اعتماد</button>
+                <button className="button small debit" disabled={busy} onClick={() => void reviewWithdrawal(request, false)}>رفض</button>
+              </div>
+            </article>
+          ))}
+          {!withdrawals.length && <div className="empty">لا توجد طلبات سحب معلقة.</div>}
         </div>
       </section>
       <section className="panel activity-panel">
