@@ -223,3 +223,23 @@ model WhatsAppAuthKey {
   value     String
   updatedAt DateTime @updatedAt
 }
+
+/// Written by database triggers: every account created, changed or deleted, and every ledger entry deleted,
+/// including changes made directly in the database. Rows are never changed.
+model CaptainAuditLog {
+  id              String   @id
+  captainId       String
+  phone           String
+  action          String
+  oldStatus       String?
+  newStatus       String?
+  fullName        String?
+  details         Json?
+  snapshot        Json?
+  dbUser          String?
+  applicationName String?
+  createdAt       DateTime @default(now())
+
+  @@index([phone, createdAt])
+  @@index([captainId, createdAt])
+}

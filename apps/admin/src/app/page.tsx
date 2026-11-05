@@ -14,6 +14,53 @@ type PaymentMethod = { id: string; label: string; details: string };
 type WithdrawalRequest = { id: string; captainName: string; captainPhone: string; amountJod: number; balanceJod: number; createdAt: string };
 type TopUpRequest = { id: string; captainName: string; captainPhone: string; amountJod: number; hasReceipt: boolean; status: string; createdAt: string };
 type CaptainAccountRequest = { id: string; fullName: string; phone: string; createdAt: string };
+type PhoneLookup = {
+  phone: string;
+  captain: { id: string; fullName: string | null; status: string; balanceJod: number; createdAt: string; updatedAt: string } | null;
+  auditLog: Array<{
+    id: string;
+    action: string;
+    oldStatus: string | null;
+    newStatus: string | null;
+    fullName: string | null;
+    details: { oldPhone?: string; oldFullName?: string | null; passwordChanged?: boolean } | null;
+    snapshot: { balanceFils?: number; amountFils?: number; description?: string; createdAt?: string } | null;
+    dbUser: string | null;
+    applicationName: string | null;
+    createdAt: string;
+  }>;
+  accountRequests: Array<{ id: string; fullName: string; status: string; createdAt: string; reviewedAt: string | null }>;
+  ledger: { count: number; firstAt: string | null; latest: Array<{ id: string; description: string; amountJod: number; balanceAfterJod: number; createdAt: string }> };
+  repliesCount: number;
+  ordersPosted: number;
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  ACTIVE: "مفعّل",
+  SUSPENDED: "موقوف",
+  PENDING_PROFILE: "لم يكمل التفعيل",
+  PENDING: "قيد المراجعة",
+  APPROVED: "معتمد",
+  REJECTED: "مرفوض"
+};
+
+function auditLabel(entry: PhoneLookup["auditLog"][number]): string {
+  const status = (value: string | null) => (value ? STATUS_LABELS[value] ?? value : "—");
+  if (entry.action === "CREATED") return `إنشاء الحساب (${status(entry.newStatus)})`;
+  if (entry.action === "DELETED") {
+    const balance = entry.snapshot?.balanceFils;
+    return `حذف الحساب${typeof balance === "number" ? ` وكان رصيده ${money(balance / 1000)} د.أ` : ""}`;
+  }
+  if (entry.action === "LEDGER_ENTRY_DELETED") {
+    const amount = entry.snapshot?.amountFils;
+    return `حذف حركة جرد: ${entry.snapshot?.description ?? ""}${typeof amount === "number" ? ` (${money(amount / 1000)} د.أ)` : ""}`;
+  }
+  const changes: string[] = [];
+  if (entry.oldStatus !== entry.newStatus) changes.push(`الحالة من ${status(entry.oldStatus)} إلى ${status(entry.newStatus)}`);
+  if (entry.details?.oldFullName !== undefined && entry.details.oldFullName !== entry.fullName) changes.push(`الاسم إلى ${entry.fullName ?? "—"}`);
+  if (entry.details?.passwordChanged) changes.push("تغيير كلمة المرور");
+  return `تعديل الحساب: ${changes.join("، ") || "تغيير بيانات"}`;
+}
 type Overview = { captainCount: number; activeCaptainCount: number; totalBalanceJod: number; settings: Settings; latestActivity: Activity[] };
 type CommissionAudit = {
   checkedJobs: number;
@@ -83,6 +130,8 @@ export default function AdminHome() {
   const [statements, setStatements] = useState<{ captains: CaptainWithStatement[]; totals: StatementTotals; from: string; to: string } | null>(null);
   const [statementView, setStatementView] = useState<"captains" | "profit">("captains");
   const [statementPhone, setStatementPhone] = useState("");
+  const [auditPhone, setAuditPhone] = useState("");
+  const [phoneLookup, setPhoneLookup] = useState<PhoneLookup | null>(null);
   const [searchedStatementPhone, setSearchedStatementPhone] = useState("");
   const statementsRef = useRef<HTMLDivElement>(null);
   const transferRequest = useRef<{ fingerprint: string; requestId: string } | null>(null);
@@ -152,6 +201,19 @@ export default function AdminHome() {
     if (!token) return;
     void api<WhatsAppLink>("/admin/whatsapp-link", token).then(setWhatsAppLink).catch(() => undefined);
   }, [token]);
+
+  async function runPhoneLookup() {
+    setBusy(true);
+    setError("");
+    try {
+      setPhoneLookup(await api<PhoneLookup>(`/admin/phone-lookup?phone=${encodeURIComponent(auditPhone.trim())}`, token));
+    } catch (reason) {
+      setPhoneLookup(null);
+      setError(reason instanceof Error ? reason.message : "تعذر فحص الرقم.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function loadStatements(view: "captains" | "profit", phone?: string) {
     setStatementView(view);
@@ -812,6 +874,60 @@ export default function AdminHome() {
               <button className="button primary" disabled={busy}><CircleDollarSign size={16} /> تنفيذ التحويل</button>
             </form>
             <p className="hint">يشترط وجود الحسابين وتوفر رصيد كافٍ لدى المستهلك؛ لا يمكن أن يصبح رصيد أي حساب سالباً. تُسجل حركتا الخصم والإضافة في سجل الحسابين.</p>
+          </article>
+          <article className="panel" style={{ gridColumn: "1 / -1" }}>
+            <div className="panel-heading"><span className="panel-icon"><BadgeCheck size={19} /></span><div><h2>فحص رقم</h2><p>حالة الحساب وسجل إنشائه وتعديله وحذفه وحركات الجرد عليه</p></div></div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "end", margin: "8px 0 12px" }}>
+              <label style={dateLabelStyle}>رقم الهاتف <input style={dateInputStyle} type="tel" inputMode="tel" dir="ltr" value={auditPhone} onChange={(event) => setAuditPhone(event.target.value)} placeholder="079xxxxxxx" /></label>
+              <button type="button" className="button primary" disabled={busy || !auditPhone.trim()} onClick={() => void runPhoneLookup()}>فحص الرقم</button>
+              {phoneLookup && <button type="button" className="button ghost" onClick={() => setPhoneLookup(null)}>✕ إغلاق</button>}
+            </div>
+            {phoneLookup && (
+              <div className="hint" style={{ display: "grid", gap: 10 }}>
+                <div>
+                  <strong><bdi dir="ltr">{phoneLookup.phone}</bdi>: </strong>
+                  {phoneLookup.captain
+                    ? <>له حساب باسم {phoneLookup.captain.fullName ?? "—"} · الحالة {STATUS_LABELS[phoneLookup.captain.status] ?? phoneLookup.captain.status} · الرصيد {money(phoneLookup.captain.balanceJod)} د.أ · أُنشئ الحساب الحالي {new Date(phoneLookup.captain.createdAt).toLocaleString("ar-JO")}</>
+                    : <>لا يوجد له حساب حالياً.</>}
+                </div>
+                <div>
+                  حركات الجرد: {phoneLookup.ledger.count}{phoneLookup.ledger.firstAt ? ` · أول حركة ${new Date(phoneLookup.ledger.firstAt).toLocaleString("ar-JO")}` : ""} · ردود على طلبات: {phoneLookup.repliesCount} · طلبات نزّلها: {phoneLookup.ordersPosted}
+                </div>
+                <div>
+                  <strong>سجل الحساب</strong>
+                  {phoneLookup.auditLog.length ? (
+                    <ul style={{ margin: "4px 0", paddingInlineStart: 18 }}>
+                      {phoneLookup.auditLog.map((entry) => (
+                        <li key={entry.id}>
+                          {new Date(entry.createdAt).toLocaleString("ar-JO")} — {auditLabel(entry)}
+                          {entry.applicationName ? ` · من: ${entry.applicationName}` : entry.dbUser ? ` · من: ${entry.dbUser}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : <div>لا يوجد سجل بعد. السجل يبدأ من وقت تفعيل هذه الميزة، وما قبلها غير محفوظ.</div>}
+                </div>
+                {phoneLookup.accountRequests.length > 0 && (
+                  <div>
+                    <strong>طلبات إنشاء الحساب</strong>
+                    <ul style={{ margin: "4px 0", paddingInlineStart: 18 }}>
+                      {phoneLookup.accountRequests.map((request) => (
+                        <li key={request.id}>{new Date(request.createdAt).toLocaleString("ar-JO")} — {request.fullName} · {STATUS_LABELS[request.status] ?? request.status}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {phoneLookup.ledger.latest.length > 0 && (
+                  <div>
+                    <strong>آخر حركات الجرد</strong>
+                    <ul style={{ margin: "4px 0", paddingInlineStart: 18 }}>
+                      {phoneLookup.ledger.latest.map((entry) => (
+                        <li key={entry.id}>{new Date(entry.createdAt).toLocaleString("ar-JO")} — {entry.description} · {money(entry.amountJod)} د.أ · الرصيد بعدها {money(entry.balanceAfterJod)} د.أ</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </article>
           <article className="panel" style={{ gridColumn: "1 / -1" }}>
             <div className="panel-heading"><span className="panel-icon"><Wallet size={19} /></span><div><h2>كشف حساب الكباتن</h2><p>الإنتاج والاستهلاك والشحن والسحب والأرضيات وصافي الربح لكل الكباتن بكبسة وحدة</p></div></div>

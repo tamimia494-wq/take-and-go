@@ -367,6 +367,49 @@ router.post("/admin/commission-audit/repair", requireAuth("admin"), async (_req,
   res.json(await repairCommissions(1000));
 });
 
+/** Everything known about a phone number: its account, the account change log, requests and ledger activity. */
+router.get("/admin/phone-lookup", requireAuth("admin"), async (req, res) => {
+  let phone: string;
+  try {
+    phone = normalizePhone(String(req.query.phone ?? ""));
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "رقم الهاتف غير صالح." });
+    return;
+  }
+  const captain = await prisma.captain.findUnique({
+    where: { phone },
+    select: { id: true, fullName: true, status: true, balanceFils: true, createdAt: true, updatedAt: true }
+  });
+  const [auditLog, accountRequests, ledgerCount, firstEntry, latestEntries, repliesCount, ordersPosted] = await Promise.all([
+    prisma.captainAuditLog.findMany({
+      where: { OR: [{ phone }, ...(captain ? [{ captainId: captain.id }] : [])] },
+      orderBy: { createdAt: "desc" },
+      take: 200
+    }),
+    prisma.captainAccountRequest.findMany({ where: { phone }, orderBy: { createdAt: "desc" }, take: 20 }),
+    captain ? prisma.ledgerEntry.count({ where: { captainId: captain.id } }) : Promise.resolve(0),
+    captain ? prisma.ledgerEntry.findFirst({ where: { captainId: captain.id }, orderBy: { createdAt: "asc" } }) : Promise.resolve(null),
+    captain
+      ? prisma.ledgerEntry.findMany({ where: { captainId: captain.id }, orderBy: { createdAt: "desc" }, take: 30 })
+      : Promise.resolve([]),
+    captain ? prisma.whatsAppReply.count({ where: { captainId: captain.id } }) : Promise.resolve(0),
+    prisma.whatsAppJob.count({ where: { sourceSenderPhone: phone } })
+  ]);
+  res.json({
+    phone,
+    captain: captain ? { ...captain, balanceJod: fromFils(captain.balanceFils) } : null,
+    auditLog,
+    accountRequests,
+    ledger: {
+      count: ledgerCount,
+      firstAt: firstEntry?.createdAt ?? null,
+      latest: latestEntries.map((entry) => ({ ...entry, amountJod: fromFils(entry.amountFils), balanceAfterJod: fromFils(entry.balanceAfterFils) }))
+    },
+    repliesCount,
+    ordersPosted
+  });
+});
+
 router.get("/admin/captains", requireAuth("admin"), async (_req, res) => {
   const captains = await prisma.captain.findMany({
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
