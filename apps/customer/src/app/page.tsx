@@ -290,7 +290,7 @@ export default function BookingPage() {
         destinationCoordinates ? `خريطة الوجهة: https://maps.google.com/?q=${destinationCoordinates.latitude},${destinationCoordinates.longitude}` : "",
         `عدد الركاب: ${passengerCount}`,
         `المقعد الخلفي: ${rearSeat ? "نعم" : "لا"}`,
-        `سيارة: ${wholeCar ? "نعم" : "لا"}`,
+        config.basePriceJod > 0 ? `سيارة: ${wholeCar ? "نعم" : "لا"}` : "",
         selectedNames ? `الخدمات والحقول:\n${selectedNames}` : "",
         `السعر الإجمالي: ${money(result.totalPriceJod)}`
       ].filter(Boolean).join("\n");
@@ -372,11 +372,14 @@ export default function BookingPage() {
                 <span className="option-text"><strong>المقعد الخلفي</strong><small>+ {money(config.rearSeatPriceJod)}</small></span>
                 <input className="switch" type="checkbox" checked={rearSeat} onChange={(event) => setRearSeat(event.target.checked)} />
               </label>
-              <label className="option-row selectable">
-                <span className="option-icon"><CarFront size={19} /></span>
-                <span className="option-text"><strong>سيارة</strong><small>+ {money(config.basePriceJod)}</small></span>
-                <input className="switch" type="checkbox" checked={wholeCar} onChange={(event) => setWholeCar(event.target.checked)} />
-              </label>
+              {/* Hidden while the admin car price is 0 (e.g. the car is set up as an add-on instead). */}
+              {config.basePriceJod > 0 && (
+                <label className="option-row selectable">
+                  <span className="option-icon"><CarFront size={19} /></span>
+                  <span className="option-text"><strong>سيارة</strong><small>+ {money(config.basePriceJod)}</small></span>
+                  <input className="switch" type="checkbox" checked={wholeCar} onChange={(event) => setWholeCar(event.target.checked)} />
+                </label>
+              )}
             </section>
 
             {config.options.length > 0 && (
@@ -432,7 +435,7 @@ export default function BookingPage() {
               <dl className="summary-lines">
                 <div><dt>الركاب</dt><dd>{passengerCount}</dd></div>
                 <div><dt>المقعد الخلفي</dt><dd>{rearSeat ? "نعم" : "لا"}</dd></div>
-                <div><dt>سيارة</dt><dd>{wholeCar ? "نعم" : "لا"}</dd></div>
+                {config.basePriceJod > 0 && <div><dt>سيارة</dt><dd>{wholeCar ? "نعم" : "لا"}</dd></div>}
                 {addonCount > 0 && <div><dt>إضافات</dt><dd>{addonCount}</dd></div>}
               </dl>
               <div className="summary-footer">
