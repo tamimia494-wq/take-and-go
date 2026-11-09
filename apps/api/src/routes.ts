@@ -1056,6 +1056,27 @@ router.patch("/admin/captains/:id/status", requireAuth("admin"), async (req, res
   res.json({ status: updated.status });
 });
 
+// Passwords are hashed and cannot be read back, so the admin sets a new one instead.
+router.put("/admin/captains/:id/password", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({ password: z.string().min(6).max(128) }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل." });
+    return;
+  }
+  const captainId = req.params.id;
+  if (typeof captainId !== "string") {
+    res.status(400).json({ error: "معرّف الكابتن غير صالح." });
+    return;
+  }
+  const passwordHash = await bcrypt.hash(parsed.data.password, 12);
+  const updated = await prisma.captain.updateMany({ where: { id: captainId }, data: { passwordHash } });
+  if (updated.count === 0) {
+    res.status(404).json({ error: "الكابتن غير موجود." });
+    return;
+  }
+  res.json({ ok: true });
+});
+
 router.put("/admin/settings", requireAuth("admin"), async (req, res) => {
   const parsed = z.object({
     groupFloorJod: z.union([z.string(), z.number()]),

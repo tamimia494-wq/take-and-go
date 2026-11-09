@@ -611,6 +611,27 @@ export default function AdminHome() {
     }
   }
 
+  async function setCaptainPassword(captain: Captain) {
+    const who = captain.fullName ? `${captain.fullName} (${captain.phone})` : captain.phone;
+    const password = window.prompt(`كلمة السر الجديدة للكابتن ${who}\n(6 أحرف على الأقل)`, "")?.trim();
+    if (!password) return;
+    if (password.length < 6) {
+      setError("كلمة السر يجب أن تكون 6 أحرف على الأقل.");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await api(`/admin/captains/${captain.id}/password`, token, { method: "PUT", body: JSON.stringify({ password }) });
+      setNotice(`تم تغيير كلمة سر ${who}. كلمة السر الجديدة: ${password}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر تغيير كلمة السر.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function changePassword(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formElement = event.currentTarget;
@@ -1033,7 +1054,7 @@ export default function AdminHome() {
                   <td data-label="الكابتن / الهاتف"><span className="captain-avatar">{(captain.fullName ?? "؟").slice(0, 1)}</span><span className="captain-identity"><strong>{captain.fullName ?? "بانتظار تفعيل الحساب"}</strong><small dir="ltr">{captain.phone}</small></span></td>
                   <td data-label="الرصيد" className="money-cell">{money(captain.balanceJod)} د.أ</td>
                   <td data-label="الحالة"><span className={`status-pill ${captain.status.toLowerCase()}`}>{statusLabel(captain.status)}</span></td>
-                  <td data-label="إجراءات"><div className="row-actions"><button className="button small credit" onClick={() => { setAdjustOpen(true); setAdjustAction("credit"); setAdjustCaptain(captain); }}><CircleDollarSign size={14} /> شحن</button><button className="button small ghost" disabled={busy} onClick={() => void toggleStatus(captain)}>{captain.status === "SUSPENDED" ? "تفعيل" : "إيقاف"}</button></div></td>
+                  <td data-label="إجراءات"><div className="row-actions"><button className="button small credit" onClick={() => { setAdjustOpen(true); setAdjustAction("credit"); setAdjustCaptain(captain); }}><CircleDollarSign size={14} /> شحن</button><button className="button small ghost" disabled={busy} onClick={() => void toggleStatus(captain)}>{captain.status === "SUSPENDED" ? "تفعيل" : "إيقاف"}</button><button className="button small ghost" disabled={busy} onClick={() => void setCaptainPassword(captain)}><KeyRound size={14} /> كلمة السر</button></div></td>
                 </tr>
               ))}</tbody>
             </table>
