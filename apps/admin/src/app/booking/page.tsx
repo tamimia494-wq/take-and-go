@@ -181,7 +181,7 @@ export default function BookingAdminPage() {
         <form className={styles.panel} onSubmit={saveSettings}>
           <div className={styles.panelTitle}><div><h2>إعدادات السعر والتواصل</h2><p>تُحسب الأسعار من هذه القيم على الخادم.</p></div><Save size={20} /></div>
           <div className={styles.settingsGrid}>
-            <label>سعر السيارة الأساسية (د.أ)<input type="number" min="0" step="0.001" value={settings.basePriceJod} onChange={(event) => setSettings({ ...settings, basePriceJod: Number(event.target.value) })} required /></label>
+            <label>سعر السيارة (د.أ) — خيار يختاره العميل<input type="number" min="0" step="0.001" value={settings.basePriceJod} onChange={(event) => setSettings({ ...settings, basePriceJod: Number(event.target.value) })} required /></label>
             <label>سعر المقعد الخلفي (د.أ)<input type="number" min="0" step="0.001" value={settings.rearSeatPriceJod} onChange={(event) => setSettings({ ...settings, rearSeatPriceJod: Number(event.target.value) })} required /></label>
             <label>رقم واتساب<input type="tel" dir="ltr" value={settings.whatsappNumber} onChange={(event) => setSettings({ ...settings, whatsappNumber: event.target.value })} placeholder="079xxxxxxx" required minLength={8} maxLength={24} /></label>
           </div>
@@ -246,7 +246,7 @@ export default function BookingAdminPage() {
               <div className={styles.bookingTop}><strong>{booking.pickupLocation} ← {booking.destinationLocation}</strong><span>{money(booking.totalPriceJod)}</span></div>
               <div className={styles.bookingMeta}><span>هاتف العميل: <bdi>{booking.customerPhone}</bdi></span><span>{new Date(booking.createdAt).toLocaleString("ar-JO")}</span></div>
               <p>{booking.pickupAddress} → {booking.destinationAddress}</p>
-              <div className={styles.bookingMeta}><span>{booking.passengerCount} ركاب</span><span>المقعد الخلفي: {booking.rearSeat ? "نعم" : "لا"}</span></div>
+              <div className={styles.bookingMeta}><span>{booking.passengerCount} ركاب</span><span>المقعد الخلفي: {booking.rearSeat ? "نعم" : "لا"}</span><span>سيارة: {booking.selections.car ? "نعم" : "لا"}</span></div>
               {Object.keys(booking.selections).length > 0 && <p>{Object.values(booking.selections).map((selection) =>
                 `${selection.label}: ${selection.value === true ? "نعم" : selection.value === false ? "لا" : selection.value}`
               ).join("، ")}</p>}

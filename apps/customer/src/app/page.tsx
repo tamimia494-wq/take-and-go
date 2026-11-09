@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import {
   Armchair,
+  CarFront,
   Check,
   ChevronDown,
   Clock3,
@@ -209,6 +210,7 @@ export default function BookingPage() {
   const [destinationCoordinates, setDestinationCoordinates] = useState<Coordinates>(null);
   const [passengerCount, setPassengerCount] = useState(1);
   const [rearSeat, setRearSeat] = useState(false);
+  const [wholeCar, setWholeCar] = useState(false);
   const [selections, setSelections] = useState<Record<string, string | boolean>>({});
 
   useEffect(() => {
@@ -221,10 +223,10 @@ export default function BookingPage() {
 
   const total = useMemo(() => {
     const options = config?.options ?? [];
-    return (config?.basePriceJod ?? 0) +
+    return (wholeCar ? config?.basePriceJod ?? 0 : 0) +
       (rearSeat ? config?.rearSeatPriceJod ?? 0 : 0) +
       options.reduce((sum, option) => sum + (option.kind === "ADDON" && selections[option.id] === true ? option.priceJod : 0), 0);
-  }, [config, rearSeat, selections]);
+  }, [config, wholeCar, rearSeat, selections]);
 
   const pickupLabel = pickupId === "other" ? pickupName : config?.locations.find((item) => item.id === pickupId)?.name ?? "";
   const destinationLabel = destinationId === "other" ? destinationName : config?.locations.find((item) => item.id === destinationId)?.name ?? "";
@@ -273,6 +275,7 @@ export default function BookingPage() {
           destinationLongitude: destinationCoordinates?.longitude,
           passengerCount,
           rearSeat,
+          wholeCar,
           selections
         })
       });
@@ -287,6 +290,7 @@ export default function BookingPage() {
         destinationCoordinates ? `خريطة الوجهة: https://maps.google.com/?q=${destinationCoordinates.latitude},${destinationCoordinates.longitude}` : "",
         `عدد الركاب: ${passengerCount}`,
         `المقعد الخلفي: ${rearSeat ? "نعم" : "لا"}`,
+        `سيارة: ${wholeCar ? "نعم" : "لا"}`,
         selectedNames ? `الخدمات والحقول:\n${selectedNames}` : "",
         `السعر الإجمالي: ${money(result.totalPriceJod)}`
       ].filter(Boolean).join("\n");
@@ -368,6 +372,11 @@ export default function BookingPage() {
                 <span className="option-text"><strong>المقعد الخلفي</strong><small>+ {money(config.rearSeatPriceJod)}</small></span>
                 <input className="switch" type="checkbox" checked={rearSeat} onChange={(event) => setRearSeat(event.target.checked)} />
               </label>
+              <label className="option-row selectable">
+                <span className="option-icon"><CarFront size={19} /></span>
+                <span className="option-text"><strong>سيارة</strong><small>+ {money(config.basePriceJod)}</small></span>
+                <input className="switch" type="checkbox" checked={wholeCar} onChange={(event) => setWholeCar(event.target.checked)} />
+              </label>
             </section>
 
             {config.options.length > 0 && (
@@ -423,6 +432,7 @@ export default function BookingPage() {
               <dl className="summary-lines">
                 <div><dt>الركاب</dt><dd>{passengerCount}</dd></div>
                 <div><dt>المقعد الخلفي</dt><dd>{rearSeat ? "نعم" : "لا"}</dd></div>
+                <div><dt>سيارة</dt><dd>{wholeCar ? "نعم" : "لا"}</dd></div>
                 {addonCount > 0 && <div><dt>إضافات</dt><dd>{addonCount}</dd></div>}
               </dl>
               <div className="summary-footer">

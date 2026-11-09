@@ -1516,6 +1516,8 @@ router.post("/booking/requests", async (req, res) => {
     destinationLongitude: z.number().finite().min(-180).max(180).nullable().optional(),
     passengerCount: z.number().int().min(1).max(7),
     rearSeat: z.boolean(),
+    // The car is an optional line like the rear seat, priced from basePriceFils.
+    wholeCar: z.boolean().default(false),
     selections: z.record(z.union([z.string().trim().max(300), z.boolean()])).default({})
   }).safeParse(req.body);
   if (!parsed.success) {
@@ -1578,7 +1580,7 @@ router.post("/booking/requests", async (req, res) => {
     }
   }
 
-  const totalPriceFils = settings.basePriceFils +
+  const totalPriceFils = (parsed.data.wholeCar ? settings.basePriceFils : 0) +
     (parsed.data.rearSeat ? settings.rearSeatPriceFils : 0) +
     options.reduce((total, option) => total +
       (option.kind === "ADDON" && parsed.data.selections[option.id] === true ? option.priceFils : 0), 0);
@@ -1590,6 +1592,10 @@ router.post("/booking/requests", async (req, res) => {
       value: parsed.data.selections[option.id]!,
       priceFils: option.priceFils
     }]));
+  // No dedicated column: the admin bookings list already shows every saved selection.
+  if (parsed.data.wholeCar) {
+    savedSelections.car = { label: "سيارة", kind: "ADDON", value: true, priceFils: settings.basePriceFils };
+  }
   const customer = await bookingCustomerFor(phone);
   const booking = await prisma.booking.create({
     data: {
