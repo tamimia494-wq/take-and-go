@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AllStatementsSheet, CaptainStatementSheet, CloseStatementButton, NetProfitSheet, dateInputStyle, dateLabelStyle, defaultPeriod, downloadPdf, hasActivity, type CaptainWithStatement, type StatementTotals } from "./statement";
+import { amountInput, blankZero } from "./amount";
 import { ArrowDownLeft, ArrowUpLeft, BadgeCheck, CircleDollarSign, KeyRound, LogOut, RefreshCw, Settings2, ShieldCheck, Trash2, UserRoundPlus, Users, Wallet } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
@@ -1118,7 +1119,16 @@ function Metric({ icon, label, value, color, detail, onClick }: { icon: React.Re
 }
 
 function MoneyInput({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
-  return <label className="money-input">{label}<span><input type="number" min="0" step="0.001" value={value} onChange={(event) => onChange(Number(event.target.value))} /><b>د.أ</b></span></label>;
+  // Text box that starts empty instead of 0; resyncs only when the value changes from outside (e.g. after a reload).
+  const [text, setText] = useState(blankZero(value));
+  useEffect(() => {
+    setText((current) => (Number(current || 0) === value ? current : blankZero(value)));
+  }, [value]);
+  return <label className="money-input">{label}<span><input type="text" inputMode="decimal" dir="ltr" value={text} placeholder="0" onChange={(event) => {
+    const next = amountInput(event.target.value);
+    setText(next);
+    onChange(Number(next || 0));
+  }} /><b>د.أ</b></span></label>;
 }
 
 function money(value: number): string {

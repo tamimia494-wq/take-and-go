@@ -280,3 +280,8 @@ input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #126df21c; }
   .profile-card label { text-align: right; }
   .profile-card input { min-height: 46px; }
 }
+
+/* Typed amounts: no spinner arrows on number fields */
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }

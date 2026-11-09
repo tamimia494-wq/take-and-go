@@ -3,12 +3,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowRight, Check, MapPin, Plus, Save, Trash2, Users } from "lucide-react";
 import styles from "./booking.module.css";
+import { amountInput, blankZero } from "../amount";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
 const API = API_URL.endsWith("/api") ? API_URL : `${API_URL.replace(/\/$/, "")}/api`;
 type Location = { id: string; name: string; active: boolean; sortOrder: number };
-type Option = { id: string; label: string; kind: "ADDON" | "FIELD"; priceJod: number; required: boolean; active: boolean; sortOrder: number };
+// priceJod is a string while the admin is typing in an edited row.
+type Option = { id: string; label: string; kind: "ADDON" | "FIELD"; priceJod: number | string; required: boolean; active: boolean; sortOrder: number };
 type Settings = { basePriceJod: number; rearSeatPriceJod: number; whatsappNumber: string };
+type SettingsForm = { basePriceJod: string; rearSeatPriceJod: string; whatsappNumber: string };
+
 type Booking = {
   id: string;
   customerPhone: string;
@@ -61,9 +65,9 @@ export default function BookingAdminPage() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customerSearch, setCustomerSearch] = useState("");
-  const [settings, setSettings] = useState<Settings>({ basePriceJod: 0, rearSeatPriceJod: 0, whatsappNumber: "" });
+  const [settings, setSettings] = useState<SettingsForm>({ basePriceJod: "", rearSeatPriceJod: "", whatsappNumber: "" });
   const [locationName, setLocationName] = useState("");
-  const [option, setOption] = useState({ label: "", kind: "ADDON" as "ADDON" | "FIELD", priceJod: "0", required: false });
+  const [option, setOption] = useState({ label: "", kind: "ADDON" as "ADDON" | "FIELD", priceJod: "", required: false });
   const [editing, setEditing] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -76,7 +80,11 @@ export default function BookingAdminPage() {
       api<Customer[]>("/admin/booking/customers", authToken)
     ]);
     setData(config);
-    setSettings(config.settings);
+    setSettings({
+      basePriceJod: blankZero(config.settings.basePriceJod),
+      rearSeatPriceJod: blankZero(config.settings.rearSeatPriceJod),
+      whatsappNumber: config.settings.whatsappNumber
+    });
     setBookings(bookingList);
     setCustomers(customerList);
   }, []);
@@ -143,11 +151,11 @@ export default function BookingAdminPage() {
     void perform(async () => {
       await api("/admin/booking/options", token, "POST", {
         ...option,
-        priceJod: option.kind === "ADDON" ? option.priceJod : "0",
+        priceJod: option.kind === "ADDON" ? option.priceJod || "0" : "0",
         active: true,
         sortOrder: data?.options.length ?? 0
       });
-      setOption({ label: "", kind: "ADDON", priceJod: "0", required: false });
+      setOption({ label: "", kind: "ADDON", priceJod: "", required: false });
     }, "تمت إضافة الخيار.");
   }
 
@@ -156,7 +164,7 @@ export default function BookingAdminPage() {
       await api(`/admin/booking/options/${item.id}`, token, "PATCH", {
         label: item.label,
         kind: item.kind,
-        priceJod: item.priceJod,
+        priceJod: String(item.priceJod) || "0",
         required: item.required,
         active: item.active,
         sortOrder: item.sortOrder
@@ -181,8 +189,8 @@ export default function BookingAdminPage() {
         <form className={styles.panel} onSubmit={saveSettings}>
           <div className={styles.panelTitle}><div><h2>إعدادات السعر والتواصل</h2><p>تُحسب الأسعار من هذه القيم على الخادم.</p></div><Save size={20} /></div>
           <div className={styles.settingsGrid}>
-            <label>سعر السيارة (د.أ) — خيار يختاره العميل<input type="number" min="0" step="0.001" value={settings.basePriceJod} onChange={(event) => setSettings({ ...settings, basePriceJod: Number(event.target.value) })} required /></label>
-            <label>سعر المقعد الخلفي (د.أ)<input type="number" min="0" step="0.001" value={settings.rearSeatPriceJod} onChange={(event) => setSettings({ ...settings, rearSeatPriceJod: Number(event.target.value) })} required /></label>
+            <label>سعر السيارة (د.أ) — خيار يختاره العميل<input type="text" inputMode="decimal" dir="ltr" value={settings.basePriceJod} onChange={(event) => setSettings({ ...settings, basePriceJod: amountInput(event.target.value) })} placeholder="مثلاً 15" /></label>
+            <label>سعر المقعد الخلفي (د.أ)<input type="text" inputMode="decimal" dir="ltr" value={settings.rearSeatPriceJod} onChange={(event) => setSettings({ ...settings, rearSeatPriceJod: amountInput(event.target.value) })} placeholder="مثلاً 12" /></label>
             <label>رقم واتساب<input type="tel" dir="ltr" value={settings.whatsappNumber} onChange={(event) => setSettings({ ...settings, whatsappNumber: event.target.value })} placeholder="079xxxxxxx" required minLength={8} maxLength={24} /></label>
           </div>
           <button className={styles.button} disabled={busy}><Save size={15} /> حفظ الإعدادات</button>
@@ -204,7 +212,7 @@ export default function BookingAdminPage() {
             <form className={styles.optionForm} onSubmit={addOption}>
               <label>الاسم<input value={option.label} onChange={(event) => setOption({ ...option, label: event.target.value })} required minLength={2} maxLength={120} /></label>
               <label>النوع<select value={option.kind} onChange={(event) => setOption({ ...option, kind: event.target.value as "ADDON" | "FIELD" })}><option value="ADDON">خدمة بسعر</option><option value="FIELD">حقل نصي</option></select></label>
-              {option.kind === "ADDON" && <label>السعر (د.أ)<input type="number" min="0" step="0.001" value={option.priceJod} onChange={(event) => setOption({ ...option, priceJod: event.target.value })} required /></label>}
+              {option.kind === "ADDON" && <label>السعر (د.أ)<input type="text" inputMode="decimal" dir="ltr" value={option.priceJod} onChange={(event) => setOption({ ...option, priceJod: amountInput(event.target.value) })} placeholder="مثلاً 5" required /></label>}
               <label className={styles.checkboxLabel}><input type="checkbox" checked={option.required} onChange={(event) => setOption({ ...option, required: event.target.checked })} /> مطلوب</label>
               <button className={styles.iconButton} disabled={busy} aria-label="إضافة الخيار"><Plus size={17} /></button>
             </form>
@@ -212,12 +220,12 @@ export default function BookingAdminPage() {
               {editing === item.id ? <>
                 <input value={item.label} onChange={(event) => setData({ ...data, options: data.options.map((value) => value.id === item.id ? { ...value, label: event.target.value } : value) })} />
                 <select value={item.kind} onChange={(event) => setData({ ...data, options: data.options.map((value) => value.id === item.id ? { ...value, kind: event.target.value as "ADDON" | "FIELD" } : value) })}><option value="ADDON">خدمة</option><option value="FIELD">حقل</option></select>
-                {item.kind === "ADDON" && <input aria-label="السعر" type="number" min="0" step="0.001" value={item.priceJod} onChange={(event) => setData({ ...data, options: data.options.map((value) => value.id === item.id ? { ...value, priceJod: Number(event.target.value) } : value) })} />}
+                {item.kind === "ADDON" && <input aria-label="السعر" type="text" inputMode="decimal" dir="ltr" value={blankZero(item.priceJod)} placeholder="السعر" onChange={(event) => setData({ ...data, options: data.options.map((value) => value.id === item.id ? { ...value, priceJod: amountInput(event.target.value) } : value) })} />}
                 <label className={styles.checkboxLabel}><input type="checkbox" checked={item.required} onChange={(event) => setData({ ...data, options: data.options.map((value) => value.id === item.id ? { ...value, required: event.target.checked } : value) })} /> مطلوب</label>
                 <button className={styles.iconButton} onClick={() => saveOption(item)} disabled={busy} aria-label="حفظ الخيار"><Check size={16} /></button>
               </> : <>
                 <button className={styles.optionName} onClick={() => setEditing(item.id)}>{item.label}</button>
-                <span>{item.kind === "ADDON" ? money(item.priceJod) : "حقل نصي"}</span>
+                <span>{item.kind === "ADDON" ? money(Number(item.priceJod)) : "حقل نصي"}</span>
                 <button className={item.active ? styles.toggleActive : styles.toggleOff} disabled={busy} onClick={() => saveOption({ ...item, active: !item.active })}>{item.active ? "مفعّل" : "متوقف"}</button>
                 <button className={styles.deleteButton} disabled={busy} onClick={() => void perform(async () => { await api(`/admin/booking/options/${item.id}`, token, "DELETE"); }, "تم حذف الخيار.")} aria-label="حذف الخيار"><Trash2 size={15} /></button>
               </>}

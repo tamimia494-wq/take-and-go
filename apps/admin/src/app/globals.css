@@ -333,3 +333,8 @@ td:first-child strong { font-weight: 600; }
   .activity-row > b { padding-top: 4px; font-size: 9px; }
   .activity-copy { overflow-wrap: anywhere; }
 }
+
+/* Typed amounts: no spinner arrows on number fields */
+input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
