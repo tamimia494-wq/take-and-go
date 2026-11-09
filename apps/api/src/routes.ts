@@ -1458,8 +1458,52 @@ router.get("/booking/config", async (_req, res) => {
   });
 });
 
-router.post("/customer/bookings", requireAuth("customer"), async (req, res) => {
+// Public booking form: no login. Each IP may send a few requests per window to keep spam out.
+const BOOKING_WINDOW_MS = 10 * 60 * 1000;
+const BOOKINGS_PER_WINDOW = 6;
+const bookingAttempts = new Map<string, number[]>();
+
+function bookingRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const recent = (bookingAttempts.get(ip) ?? []).filter((time) => now - time < BOOKING_WINDOW_MS);
+  if (recent.length >= BOOKINGS_PER_WINDOW) {
+    bookingAttempts.set(ip, recent);
+    return true;
+  }
+  recent.push(now);
+  bookingAttempts.set(ip, recent);
+  if (bookingAttempts.size > 5000) {
+    for (const [key, times] of bookingAttempts) {
+      if (times.every((time) => now - time >= BOOKING_WINDOW_MS)) bookingAttempts.delete(key);
+    }
+  }
+  return false;
+}
+
+/** Finds the customer record for a phone, creating a password-less one for guest bookings. */
+async function bookingCustomerFor(phone: string): Promise<{ id: string; phone: string }> {
+  const existing = await prisma.bookingCustomer.findUnique({ where: { phone }, select: { id: true, phone: true } });
+  if (existing) return existing;
+  try {
+    // A random hash nobody knows: guest records can never be logged into.
+    const passwordHash = await bcrypt.hash(`guest:${crypto.randomUUID()}:${crypto.randomUUID()}`, 10);
+    return await prisma.bookingCustomer.create({ data: { phone, passwordHash }, select: { id: true, phone: true } });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return prisma.bookingCustomer.findUniqueOrThrow({ where: { phone }, select: { id: true, phone: true } });
+    }
+    throw error;
+  }
+}
+
+router.post("/booking/requests", async (req, res) => {
+  const ip = req.header("x-real-ip") ?? req.socket.remoteAddress ?? "unknown";
+  if (bookingRateLimited(ip)) {
+    res.status(429).json({ error: "أرسلت طلبات كثيرة خلال وقت قصير. انتظر بضع دقائق ثم حاول مجدداً." });
+    return;
+  }
   const parsed = z.object({
+    phone: z.string().min(8).max(24),
     pickupLocationId: z.string().min(1).optional(),
     pickupLocationName: z.string().trim().min(2).max(120).optional(),
     pickupAddress: z.string().trim().min(2).max(300),
@@ -1484,14 +1528,15 @@ router.post("/customer/bookings", requireAuth("customer"), async (req, res) => {
     return;
   }
 
-  const [customer, settings] = await Promise.all([
-    prisma.bookingCustomer.findUnique({ where: { id: req.user!.id }, select: { id: true, phone: true } }),
-    prisma.bookingSettings.upsert({ where: { id: "default" }, create: { id: "default" }, update: {} })
-  ]);
-  if (!customer) {
-    res.status(401).json({ error: "انتهت صلاحية تسجيل الدخول. سجّل الدخول مجدداً." });
+  let phone: string;
+  try {
+    phone = normalizePhone(parsed.data.phone);
+  } catch {
+    res.status(400).json({ error: "أدخل رقم هاتف أردنياً صحيحاً مثل 0791234567." });
     return;
   }
+
+  const settings = await prisma.bookingSettings.upsert({ where: { id: "default" }, create: { id: "default" }, update: {} });
   if (!settings.whatsappNumber) {
     res.status(503).json({ error: "لم تضبط الإدارة رقم واتساب لاستقبال الحجوزات بعد." });
     return;
@@ -1545,6 +1590,7 @@ router.post("/customer/bookings", requireAuth("customer"), async (req, res) => {
       value: parsed.data.selections[option.id]!,
       priceFils: option.priceFils
     }]));
+  const customer = await bookingCustomerFor(phone);
   const booking = await prisma.booking.create({
     data: {
       customerId: customer.id,

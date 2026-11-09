@@ -35,7 +35,7 @@ export default function LocationPicker({ value, onChange }: { value: Coordinates
       />
       {value && <MapCenter latitude={value.latitude} longitude={value.longitude} />}
       <MapClick onPick={onChange} />
-      {value && <CircleMarker center={center} radius={10} pathOptions={{ color: "#fff", weight: 3, fillColor: "#b8432f", fillOpacity: 1 }} />}
+      {value && <CircleMarker center={center} radius={10} pathOptions={{ color: "#0c1424", weight: 3, fillColor: "#f7b500", fillOpacity: 1 }} />}
     </MapContainer>
   );
 }
