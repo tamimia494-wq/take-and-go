@@ -58,6 +58,23 @@ export function matchesCaptain(captain: Captain, query: string): boolean {
   return (captain.fullName ?? "").includes(text) || (digits.length > 0 && captain.phone.includes(digits));
 }
 
+/** Active with a balance above zero: shown in the list without searching. */
+export function isListedCaptain(captain: Captain): boolean {
+  return captain.status === "ACTIVE" && captain.balanceJod > 0;
+}
+
+/**
+ * What a captain list shows: without a search only active captains with a balance, highest balance first. Zero
+ * balance and inactive accounts appear only when searched for, after the ones with a balance.
+ */
+export function listCaptains(captains: Captain[], query: string): { visible: Captain[]; hidden: number } {
+  const rank = (captain: Captain) => (isListedCaptain(captain) ? 0 : captain.status === "ACTIVE" ? 1 : 2);
+  const sorted = [...captains].sort((left, right) => rank(left) - rank(right) || right.balanceJod - left.balanceJod);
+  if (query.trim()) return { visible: sorted.filter((captain) => matchesCaptain(captain, query)), hidden: 0 };
+  const visible = sorted.filter(isListedCaptain);
+  return { visible, hidden: captains.length - visible.length };
+}
+
 /** The admin session saved by the main dashboard, or null when nobody is logged in. */
 export function useAdminToken(): { token: string; missing: boolean } {
   const [token, setToken] = useState("");

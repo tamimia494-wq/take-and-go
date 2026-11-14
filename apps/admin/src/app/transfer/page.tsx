@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CircleDollarSign, RefreshCw } from "lucide-react";
-import { accountTypeLabel, AdminFrame, api, LoginRequired, matchesCaptain, money, statusLabel, useAdminToken, type Captain } from "../admin-kit";
+import { accountTypeLabel, AdminFrame, api, listCaptains, LoginRequired, money, statusLabel, useAdminToken, type Captain } from "../admin-kit";
 import { amountInput } from "../amount";
 
 // The commission-transfer form on its own page: every captain is listed, and the admin marks one as the consumer
@@ -78,7 +78,7 @@ export default function TransferPage() {
     }
   }
 
-  const visible = captains.filter((captain) => matchesCaptain(captain, query));
+  const { visible, hidden } = listCaptains(captains, query);
 
   return (
     <AdminFrame title="تحويل عمولة من مستهلك إلى منتج" subtitle="اختار من القائمة مين المستهلك (بنخصم منه) ومين المنتج (بنضيفله)، واكتب المبلغ.">
@@ -104,10 +104,10 @@ export default function TransferPage() {
       <section className="panel captains-panel">
         <div className="list-heading">
           <span className="panel-heading compact"><span><strong>كل الكباتن</strong><small>{captains.length} حساب</small></span></span>
-          <input className="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="بحث بالاسم أو الهاتف" />
+          <input className="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="بحث بالرقم أو الاسم (يظهر المخفيين كمان)" />
           <button type="button" className="button ghost" disabled={busy} onClick={() => void load(token)}><RefreshCw size={16} /> تحديث</button>
         </div>
-        <div className="table-wrap">
+        <div className="table-wrap captain-list">
           <table><thead><tr><th>الكابتن / الهاتف</th><th>الرصيد</th><th>نوع الحساب</th><th>الحالة</th><th>اختيار</th></tr></thead>
             <tbody>{visible.map((captain) => (
               <tr key={captain.id}>
@@ -126,7 +126,8 @@ export default function TransferPage() {
               </tr>
             ))}</tbody>
           </table>
-          {!visible.length && <div className="empty">{captains.length ? "لا يوجد كباتن مطابقون للبحث." : "جارٍ التحميل..."}</div>}
+          {!visible.length && <div className="empty">{!captains.length ? "جارٍ التحميل..." : query.trim() ? "لا يوجد كباتن مطابقون للبحث." : "ما في كباتن مفعّلين معهم رصيد."}</div>}
+          {hidden > 0 && <div className="hidden-note">{hidden} حساب مخفي (رصيده صفر أو مش مفعّل). ابحث برقمه أو اسمه لتشوفه.</div>}
         </div>
       </section>
     </AdminFrame>

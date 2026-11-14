@@ -338,3 +338,18 @@ td:first-child strong { font-weight: 600; }
 input[type="number"] { -moz-appearance: textfield; appearance: textfield; }
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
+/* Captain lists on the management and transfer pages: white rows, black, large, bold text. */
+.admin-shell .captain-list { background: #fff; border-radius: 14px; padding: 4px 10px; }
+.admin-shell .captain-list th { color: #000; font-size: 14px; font-weight: 800; border-color: #d9dee6; }
+.admin-shell .captain-list td { color: #000; font-size: 15px; font-weight: 700; border-color: #e3e7ee; }
+.admin-shell .captain-list td:first-child .captain-identity strong { color: #000; font-size: 17px; font-weight: 800; }
+.admin-shell .captain-list .captain-identity small { color: #000; font-size: 15px; font-weight: 700; }
+.admin-shell .captain-list .money-cell { color: #000; font-size: 16px; font-weight: 800; }
+.admin-shell .captain-list .status-pill { font-size: 13px; font-weight: 800; padding: 6px 10px; }
+.admin-shell .captain-list .captain-avatar { width: 36px; height: 36px; font-size: 16px; font-weight: 800; color: #000; }
+.admin-shell .captain-list .empty, .admin-shell .captain-list .hidden-note { color: #000; font-size: 14px; font-weight: 700; padding: 12px 4px; }
+.admin-shell .captain-list .credit-form { color: #000; background: #f4f7fb; border-color: #d9dee6; }
+.admin-shell .captain-list .credit-form div, .admin-shell .captain-list .credit-form div span { color: #000; font-size: 14px; font-weight: 700; }
+.admin-shell .captain-list .credit-form input { font-size: 15px; color: #000; background: #fff; border: 1px solid #c9d1dd; }
+.admin-shell .captain-list strong { color: #000; }
