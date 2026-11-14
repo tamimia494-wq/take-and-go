@@ -12,7 +12,7 @@ import { getDeletionStatus, importGroupCaptains, isExcludedPhone } from "./whats
 import { getLastGroupRemovalRun, previewGroupRemovals } from "./group-removal";
 import { getSocketState, logoutWhatsAppSocket, startWhatsAppSocket } from "./whatsapp-socket";
 import QRCode from "qrcode";
-import { getLastDeletionStatus, greenApiRequest } from "./green-api";
+import { getBotPhone, getGroupMembers, getLastDeletionStatus } from "./whatsapp-client";
 import { config } from "./config";
 
 export const router = Router();
@@ -576,44 +576,28 @@ router.post("/admin/captains/initial-credit", requireAuth("admin"), async (_req,
   res.json({ creditedAccounts: credited, amountJodPerAccount: 1 });
 });
 
-router.get("/admin/green-api/diagnose", requireAuth("admin"), async (req, res) => {
-  const configured = Boolean(config.greenApiInstanceId && config.greenApiToken && config.greenApiGroupId);
+router.get("/admin/whatsapp/diagnose", requireAuth("admin"), async (req, res) => {
+  const socketState = getSocketState();
   const result: Record<string, unknown> = {
-    configured,
-    instanceId: config.greenApiInstanceId ?? null,
-    groupId: config.greenApiGroupId ?? null
+    groupConfigured: Boolean(config.whatsappGroupId),
+    groupId: config.whatsappGroupId ?? null,
+    socket: socketState.status,
+    socketError: socketState.error,
+    botPhone: getBotPhone()
   };
-  try {
-    const settings = await greenApiRequest<{ stateInstance?: string; phone?: string; errorMessage?: string }>("getWaSettings");
-    result.instanceState = settings.stateInstance ?? settings.errorMessage ?? "unknown";
-    result.instancePhone = settings.phone ?? null;
-    result.authorized = settings.stateInstance === "authorized";
-  } catch (error) {
-    result.instanceError = error instanceof Error ? error.message : String(error);
-  }
-  try {
-    const data = await greenApiRequest<{
-      participants?: Array<{ id?: string; participantId?: string; phoneNumber?: string; isAdmin?: boolean; isSuperAdmin?: boolean }>;
-    }>("getGroupData", { groupId: config.greenApiGroupId });
-    result.groupFound = true;
-    result.participantCount = (data.participants ?? []).length;
-    // Deleting other members' messages requires the bot to be a group admin.
-    const botPhone = typeof result.instancePhone === "string" ? phoneFromChatId(result.instancePhone) : null;
-    const bot = botPhone
-      ? (data.participants ?? []).find((participant) =>
-        [participant.phoneNumber, participant.id, participant.participantId].some((id) => id && phoneFromChatId(id) === botPhone))
-      : undefined;
-    result.botInGroup = Boolean(bot);
-    result.botIsAdmin = Boolean(bot && (bot.isAdmin || bot.isSuperAdmin));
-  } catch (error) {
-    result.groupError = error instanceof Error ? error.message : String(error);
-  }
-  try {
-    const settings = await greenApiRequest<{ webhookUrl?: string; incomingWebhook?: string }>("getSettings");
-    result.webhookUrl = settings.webhookUrl ?? null;
-    result.incomingWebhook = settings.incomingWebhook ?? null;
-  } catch (error) {
-    result.settingsError = error instanceof Error ? error.message : String(error);
+  if (socketState.status === "connected" && config.whatsappGroupId) {
+    try {
+      const members = await getGroupMembers(true);
+      result.groupFound = true;
+      result.participantCount = members.length;
+      // Deleting other members' messages and removing members require the bot to be a group admin.
+      const botPhone = getBotPhone();
+      const bot = botPhone ? members.find((member) => member.phone === botPhone) : undefined;
+      result.botInGroup = Boolean(bot);
+      result.botIsAdmin = Boolean(bot?.isAdmin);
+    } catch (error) {
+      result.groupError = error instanceof Error ? error.message : String(error);
+    }
   }
   result.excludedPhones = [config.adminContactPhone, ...config.excludedAdminPhones]
     .map((phone) => phoneFromChatId(phone) ?? phone);
@@ -629,7 +613,6 @@ router.get("/admin/green-api/diagnose", requireAuth("admin"), async (req, res) =
   result.webhookQueue = Object.fromEntries(queue.map((row) => [row.status, row._count._all]));
   result.latestWebhookErrors = latestErrors;
   Object.assign(result, getDeletionStatus());
-  result.socket = getSocketState().status;
   result.lastDeletion = getLastDeletionStatus();
 
   const phoneQuery = typeof req.query.phone === "string" ? req.query.phone : "";
@@ -774,7 +757,7 @@ router.post("/admin/captains/import", requireAuth("admin"), async (req, res) => 
   } catch (error) {
     console.error("Group captain import failed:", error);
     res.status(502).json({
-      error: error instanceof Error ? error.message : "تعذر الاتصال بخدمة Green API."
+      error: error instanceof Error ? error.message : "تعذر قراءة أعضاء الجروب من واتساب. تأكد أن رقم البوت مربوط."
     });
   }
 });

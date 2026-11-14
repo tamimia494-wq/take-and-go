@@ -1,10 +1,11 @@
 import type { AuthenticationCreds, SignalDataTypeMap, WAMessage, WASocket } from "@whiskeysockets/baileys";
 import { config } from "./config";
 import { prisma } from "./db";
+import { markGroupMessageDeleted, saveGroupMessage, storedMessageParticipant } from "./message-store";
 
-// A direct WhatsApp Web connection (Baileys) for the bot number. While it is linked, sending and deleting group
-// messages go through it instead of Green API, and group messages reach the same processing pipeline. It only
-// starts once an admin links it from the dashboard, so nothing changes until then.
+// The direct WhatsApp Web connection (Baileys) for the bot number: the only link to WhatsApp. Group messages come in
+// through it, are kept in the message store and go through the processing pipeline; sending, deleting messages and
+// removing members go out through it. It starts once an admin links it from the dashboard with a QR code.
 
 type Baileys = typeof import("@whiskeysockets/baileys");
 type IncomingWebhook = {
@@ -71,31 +72,64 @@ export function getSocketState(): { status: SocketStatus; qr: string | null; pho
   return { status, qr: lastQr, phone: userId ? userId.split(":")[0]!.split("@")[0]! : null, error: lastError };
 }
 
-/** Deletes a group message for everyone. Returns false when the sender of the message is unknown. */
-export async function deleteViaSocket(messageId: string): Promise<boolean> {
-  const participant = participantByMessageId.get(messageId);
-  if (!socket || !participant || !config.greenApiGroupId) return false;
-  await socket.sendMessage(config.greenApiGroupId, {
-    delete: { remoteJid: config.greenApiGroupId, id: messageId, participant, fromMe: false }
-  });
-  return true;
+export class WhatsAppNotConnectedError extends Error {
+  constructor() {
+    super("WhatsApp is not linked or not connected. Link the bot number from the admin dashboard (QR).");
+    this.name = "WhatsAppNotConnectedError";
+  }
 }
 
-/** Removes a member from the group. Returns false when WhatsApp did not confirm the removal. */
-export async function removeParticipantViaSocket(phone: string): Promise<boolean> {
-  if (!socket || !config.greenApiGroupId) return false;
-  const results = await socket.groupParticipantsUpdate(config.greenApiGroupId, [`${phone}@s.whatsapp.net`], "remove");
-  return results.some((result) => result.status === "200");
+function connectedSocket(): { sock: WASocket; groupId: string } {
+  if (!socket || status !== "connected") throw new WhatsAppNotConnectedError();
+  if (!config.whatsappGroupId) throw new Error("WHATSAPP_GROUP_ID is not set.");
+  return { sock: socket, groupId: config.whatsappGroupId };
+}
+
+/** Deletes a group message for everyone. Throws when the sender of the message is unknown. */
+export async function deleteViaSocket(messageId: string): Promise<void> {
+  const { sock, groupId } = connectedSocket();
+  const participant = participantByMessageId.get(messageId) ?? await storedMessageParticipant(messageId);
+  if (!participant) throw new Error(`The sender of message ${messageId} is unknown, so it cannot be deleted.`);
+  await sock.sendMessage(groupId, { delete: { remoteJid: groupId, id: messageId, participant, fromMe: false } });
+  await markGroupMessageDeleted(messageId);
+}
+
+export type SocketGroupParticipant = { ids: string[]; isAdmin: boolean };
+const PARTICIPANTS_CACHE_MS = 60_000;
+let participantsCache: { at: number; participants: SocketGroupParticipant[] } | null = null;
+
+/** Group members read from WhatsApp, cached for a minute; `fresh` skips the cache. */
+export async function getGroupParticipantsViaSocket(fresh = false): Promise<SocketGroupParticipant[]> {
+  if (!fresh && participantsCache && Date.now() - participantsCache.at < PARTICIPANTS_CACHE_MS) return participantsCache.participants;
+  const { sock, groupId } = connectedSocket();
+  const metadata = await sock.groupMetadata(groupId);
+  const participants = metadata.participants.map((participant) => ({
+    ids: [participant.jid, participant.id, participant.lid].filter((id): id is string => Boolean(id)),
+    isAdmin: Boolean(participant.admin || participant.isAdmin || participant.isSuperAdmin)
+  }));
+  participantsCache = { at: Date.now(), participants };
+  return participants;
+}
+
+/** Removes a member from the group. Throws when WhatsApp does not confirm the removal. */
+export async function removeParticipantViaSocket(phone: string): Promise<void> {
+  const { sock, groupId } = connectedSocket();
+  const results = await sock.groupParticipantsUpdate(groupId, [`${phone}@s.whatsapp.net`], "remove");
+  if (!results.some((result) => result.status === "200")) {
+    const statuses = results.map((result) => result.status).join(", ") || "no answer";
+    throw new Error(`WhatsApp did not confirm the removal (${statuses}); is the bot a group admin?`);
+  }
+  participantsCache = null;
 }
 
 export async function sendPrivateViaSocket(phone: string, message: string): Promise<void> {
-  if (!socket) throw new Error("WhatsApp socket is not connected.");
-  await socket.sendMessage(`${phone}@s.whatsapp.net`, { text: message });
+  const { sock } = connectedSocket();
+  await sock.sendMessage(`${phone}@s.whatsapp.net`, { text: message });
 }
 
 export async function sendViaSocket(message: string): Promise<void> {
-  if (!socket || !config.greenApiGroupId) throw new Error("WhatsApp socket is not connected.");
-  await socket.sendMessage(config.greenApiGroupId, { text: message });
+  const { sock, groupId } = connectedSocket();
+  await sock.sendMessage(groupId, { text: message });
 }
 
 export async function hasStoredSession(): Promise<boolean> {
@@ -189,24 +223,55 @@ async function connect(lib: Baileys): Promise<void> {
   sock.ev.on("messages.upsert", ({ messages, type }) => {
     if (type !== "notify" && type !== "append") return;
     for (const message of messages) {
-      const webhook = toIncomingWebhook(lib, message);
-      if (!webhook || !incomingHandler) continue;
-      void incomingHandler(webhook).catch((error: unknown) => {
-        console.error(`WhatsApp socket message ${webhook.idMessage} could not be processed:`, error);
+      void handleUpsert(lib, message).catch((error: unknown) => {
+        console.error(`WhatsApp socket message ${message.key.id ?? "unknown"} could not be processed:`, error);
       });
     }
   });
+
+  sock.ev.on("group-participants.update", () => {
+    participantsCache = null;
+  });
 }
 
-/** Converts a Baileys group message into the Green API webhook shape the processing pipeline already reads. */
+/** Keeps the message in the store first, so recovery can find it, then hands it to the processing pipeline. */
+async function handleUpsert(lib: Baileys, message: WAMessage): Promise<void> {
+  const key = message.key;
+  if (!config.whatsappGroupId || key.remoteJid !== config.whatsappGroupId || !key.id) return;
+  const protocol = lib.normalizeMessageContent(message.message)?.protocolMessage;
+  if (protocol) {
+    if (protocol.type === lib.proto.Message.ProtocolMessage.Type.REVOKE && protocol.key?.id) {
+      await markGroupMessageDeleted(protocol.key.id);
+    }
+    return;
+  }
+  const webhook = toIncomingWebhook(lib, message);
+  if (!webhook) return;
+  const data = webhook.messageData;
+  const text = (data.textMessageData as { textMessage?: string } | undefined)?.textMessage;
+  const timestamp = webhook.timestamp ?? Math.floor(Date.now() / 1000);
+  await saveGroupMessage(webhook.idMessage, key.participant || webhook.senderData.sender, timestamp, {
+    type: "incoming",
+    idMessage: webhook.idMessage,
+    timestamp,
+    senderId: webhook.senderData.sender,
+    typeMessage: data.typeMessage,
+    ...(text ? { textMessage: text } : {}),
+    ...(data.quotedMessage ? { quotedMessage: data.quotedMessage } : {}),
+    ...(data.reactionMessageData ? { reactionMessageData: data.reactionMessageData } : {})
+  });
+  if (incomingHandler) await incomingHandler(webhook);
+}
+
+/** Converts a Baileys group message into the webhook shape the processing pipeline reads. */
 function toIncomingWebhook(lib: Baileys, message: WAMessage): IncomingWebhook | null {
-  const groupId = config.greenApiGroupId;
+  const groupId = config.whatsappGroupId;
   const key = message.key;
   if (!groupId || key.remoteJid !== groupId || key.fromMe || !key.id) return null;
   const rawParticipant = key.participant ?? "";
   const sender = key.participantPn ?? rawParticipant;
   if (!sender) return null;
-  // WhatsApp's own key beats the id Green API reports, which may be a phone number in a LID-addressed group.
+  // WhatsApp's own key is what a delete-for-everyone needs, also in a LID-addressed group.
   rememberMessageParticipant(key.id, rawParticipant || sender, true);
 
   const content = lib.normalizeMessageContent(message.message);

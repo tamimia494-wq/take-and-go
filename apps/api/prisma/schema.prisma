@@ -244,6 +244,19 @@ model WhatsAppWebhookEvent {
   @@index([status, nextAttemptAt, createdAt])
 }
 
+/// Group messages seen by the WhatsApp link, kept for 3 days so missed orders, replies and likes can be recovered
+/// and messages can be deleted after a restart.
+model WhatsAppMessage {
+  id          String   @id
+  participant String
+  timestamp   Int
+  record      Json
+  isDeleted   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([timestamp])
+}
+
 model PaymentMethod {
   id          String   @id @default(cuid())
   label       String

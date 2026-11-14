@@ -274,7 +274,7 @@ export default function AdminHome() {
   }
 
   async function logoutWhatsAppLink() {
-    if (!window.confirm("فصل ربط الواتساب المباشر والرجوع لـ Green API؟")) return;
+    if (!window.confirm("فصل ربط الواتساب؟ النظام ما رح يقرأ الجروب ولا يحذف رسائل لحد ما تربطه من جديد.")) return;
     setError("");
     try {
       await api("/admin/whatsapp-link/logout", token, { method: "POST" });
@@ -341,32 +341,22 @@ export default function AdminHome() {
     setNotice("");
     try {
       const result = await api<Record<string, unknown>>(
-        `/admin/green-api/diagnose${diagnosePhone.trim() ? `?phone=${encodeURIComponent(diagnosePhone.trim())}` : ""}`,
+        `/admin/whatsapp/diagnose${diagnosePhone.trim() ? `?phone=${encodeURIComponent(diagnosePhone.trim())}` : ""}`,
         token
       );
       const lines: string[] = [];
-      if (result.configured !== true) lines.push("⚠️ متغيرات Green API غير مضبوطة على الخادم.");
-      if (typeof result.instanceState === "string") {
-        lines.push(result.authorized === true
-          ? "✅ الـ Instance متصل بالواتساب."
-          : `❌ الـ Instance غير مرتبط بالواتساب (الحالة: ${result.instanceState}). امسح QR من لوحة Green API.`);
-      }
-      if (result.instanceError) lines.push(`❌ فشل الوصول للـ Instance: ${String(result.instanceError)}`);
-      if (typeof result.instancePhone === "string" && result.instancePhone) lines.push(`📱 رقم الـ Instance: ${result.instancePhone}`);
+      if (result.groupConfigured !== true) lines.push("⚠️ معرّف الجروب (WHATSAPP_GROUP_ID) غير مضبوط على الخادم.");
+      lines.push(result.socket === "connected"
+        ? `✅ واتساب مربوط${typeof result.botPhone === "string" ? ` برقم ${result.botPhone}` : ""}.`
+        : `❌ واتساب غير مربوط (الحالة: ${String(result.socket)}). اربط رقم البوت من قسم «ربط واتساب».${result.socketError ? ` آخر خطأ: ${String(result.socketError)}` : ""}`);
       if (result.groupFound === true) lines.push(`✅ الجروب موجود وعدد المشاركين: ${String(result.participantCount)}.`);
-      if (result.groupError) lines.push(`❌ فشل قراءة الجروب: ${String(result.groupError)} — تأكد من GREEN_API_GROUP_ID.`);
+      if (result.groupError) lines.push(`❌ فشل قراءة الجروب: ${String(result.groupError)} — تأكد من WHATSAPP_GROUP_ID وإن البوت عضو بالجروب.`);
       if (result.groupFound === true) {
         lines.push(result.botIsAdmin === true
-          ? "✅ رقم البوت أدمن في الجروب ويقدر يحذف الرسائل."
+          ? "✅ رقم البوت أدمن في الجروب ويقدر يحذف الرسائل ويشيل الأعضاء."
           : result.botInGroup === true
-            ? "❌ رقم البوت مش أدمن في الجروب، فما بيقدر يحذف رسائل الأعضاء. خلّيه أدمن."
+            ? "❌ رقم البوت مش أدمن في الجروب، فما بيقدر يحذف رسائل الأعضاء ولا يشيلهم. خلّيه أدمن."
             : "❌ رقم البوت مش موجود بين أعضاء الجروب.");
-      }
-      if (result.settingsError) lines.push(`❌ تعذر قراءة إعدادات الـ Webhook: ${String(result.settingsError)}`);
-      if (result.incomingWebhook !== undefined) {
-        lines.push(result.incomingWebhook === "yes" && result.webhookUrl
-          ? `✅ استقبال الرسائل مفعّل على: ${String(result.webhookUrl)}`
-          : `❌ استقبال الرسائل (incomingWebhook) غير مفعّل أو رابط الـ Webhook فارغ (${String(result.webhookUrl ?? "")}).`);
       }
       if (Array.isArray(result.excludedPhones)) lines.push(`🛡️ أرقام مستثناة من الحذف: ${result.excludedPhones.join("، ") || "لا يوجد"}`);
       if (result.webhookQueue && typeof result.webhookQueue === "object") {
@@ -374,14 +364,9 @@ export default function AdminHome() {
       }
       const webhookErrors = Array.isArray(result.latestWebhookErrors) ? result.latestWebhookErrors as Array<{ lastError: string }> : [];
       if (webhookErrors.length) lines.push(`⚠️ آخر أخطاء المعالجة: ${webhookErrors.map((item) => item.lastError).join(" ؛ ")}`);
-      lines.push(result.socket === "connected"
-        ? "🔗 الربط المباشر متصل وجاهز للحذف عبر Baileys عند معرفة مرسل الرسالة."
-        : "🔗 الربط المباشر غير متصل.");
-      const lastDeletion = result.lastDeletion as { at?: string; transport?: string; error?: string | null } | null;
+      const lastDeletion = result.lastDeletion as { at?: string; error?: string | null } | null;
       if (lastDeletion) {
-        const transportName = lastDeletion.transport === "baileys" ? "Baileys المباشر"
-          : lastDeletion.transport === "green-api" ? "Green API" : "فشل";
-        lines.push(`🗑️ آخر محاولة حذف: ${transportName} (${new Date(lastDeletion.at ?? "").toLocaleTimeString("ar-JO")})${lastDeletion.error ? ` — ${lastDeletion.error}` : ""}.`);
+        lines.push(`🗑️ آخر محاولة حذف (${new Date(lastDeletion.at ?? "").toLocaleTimeString("ar-JO")}): ${lastDeletion.error ? `فشلت — ${lastDeletion.error}` : "نجحت"}.`);
       } else {
         lines.push("⏳ لم تُسجل محاولة حذف منذ آخر تشغيل.");
       }
@@ -401,7 +386,7 @@ export default function AdminHome() {
       }
       setNotice(lines.join(" | ") || JSON.stringify(result));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر تشخيص الاتصال.");
+      setError(reason instanceof Error ? reason.message : "تعذر فحص اتصال واتساب.");
     } finally {
       setBusy(false);
     }
@@ -849,7 +834,7 @@ export default function AdminHome() {
         <section className="metric-grid">
           <Metric icon={<Users size={20} />} label="إجمالي الكباتن" value={overview?.captainCount ?? 0} color="blue" detail={`${overview?.activeCaptainCount ?? 0} حساب مفعل`} />
           <Metric icon={<CircleDollarSign size={20} />} label="شحن رصيد للكابتن" value="فتح النموذج" color="violet" detail="حسب رقم الهاتف" onClick={() => { setAdjustOpen(true); setAdjustCaptain(null); }} />
-          <Metric icon={<BadgeCheck size={20} />} label="حالة التكامل" value="Green API" color="green" detail="ربط مجموعة واتساب" />
+          <Metric icon={<BadgeCheck size={20} />} label="حالة التكامل" value="واتساب مباشر" color="green" detail="ربط مجموعة واتساب" />
         </section>
         <div className="admin-account-shortcuts" style={{ display: "flex", flexWrap: "wrap", gap: 10, margin: "-2px 0 16px" }}>
           <a className="button primary" href="#captain-account-create"><UserRoundPlus size={16} /> إنشاء حساب كابتن</a>
@@ -896,10 +881,10 @@ export default function AdminHome() {
             </form>
           </article>
           <article className="panel">
-            <div className="panel-heading"><span className="panel-icon"><ShieldCheck size={19} /></span><div><h2>ربط واتساب مباشر</h2><p>بديل مجاني لـ Green API لحذف الرسائل وإرسال التنبيهات</p></div></div>
+            <div className="panel-heading"><span className="panel-icon"><ShieldCheck size={19} /></span><div><h2>ربط واتساب</h2><p>رقم البوت: قراءة الجروب وحذف الرسائل وإزالة الأعضاء والتنبيهات</p></div></div>
             {whatsAppLink?.status === "connected" ? (
               <>
-                <p className="hint">✅ متصل برقم <bdi>{whatsAppLink.phone}</bdi>. الحذف والتنبيهات تمر عبر هذا الربط الآن.</p>
+                <p className="hint">✅ متصل برقم <bdi>{whatsAppLink.phone}</bdi>. كل شغل الجروب بيمر عبر هذا الربط.</p>
                 <button className="button ghost full" onClick={() => void logoutWhatsAppLink()}>فصل الربط</button>
               </>
             ) : whatsAppLink?.status === "waiting_for_qr" && whatsAppLink.qrDataUrl ? (
@@ -911,7 +896,7 @@ export default function AdminHome() {
               <p className="hint">⏳ جارٍ الاتصال...</p>
             ) : (
               <>
-                <p className="hint">غير مربوط حالياً، ويعمل النظام عبر Green API.{whatsAppLink?.error ? ` آخر خطأ: ${whatsAppLink.error}` : ""}</p>
+                <p className="hint">⚠️ غير مربوط حالياً، فالنظام ما بيقرأ الجروب ولا بيحذف رسائل.{whatsAppLink?.error ? ` آخر خطأ: ${whatsAppLink.error}` : ""}</p>
                 <button className="button primary full" onClick={() => void startWhatsAppLink()}>ربط رقم البوت (عرض QR)</button>
               </>
             )}
@@ -951,10 +936,10 @@ export default function AdminHome() {
             )}
           </article>
           <article className="panel import-panel">
-            <div className="panel-heading"><span className="panel-icon blue"><UserRoundPlus size={19} /></span><div><h2>إضافة الكباتن</h2><p>استيراد المشاركين من مجموعة Green API المحددة</p></div></div>
+            <div className="panel-heading"><span className="panel-icon blue"><UserRoundPlus size={19} /></span><div><h2>إضافة الكباتن</h2><p>استيراد المشاركين من جروب الواتساب المحدد</p></div></div>
             <div className="import-visual"><div className="avatar-stack"><span>ك</span><span>ر</span><span>م</span><b>+</b></div><span>إضافة آمنة للمجموعة المحددة <span className="flag-small">🇯🇴</span></span></div>
             <input className="search" value={diagnosePhone} onChange={(event) => setDiagnosePhone(event.target.value)} placeholder="رقم لفحص سبب عدم حذف رسائله (اختياري)" />
-            <button className="button ghost full" disabled={busy} onClick={() => void diagnose()}><BadgeCheck size={17} /> فحص اتصال Green API والحذف</button>
+            <button className="button ghost full" disabled={busy} onClick={() => void diagnose()}><BadgeCheck size={17} /> فحص اتصال واتساب والحذف</button>
             <button className="button primary full" disabled={busy} onClick={() => void importCaptains()}><UserRoundPlus size={17} /> {busy ? "جارٍ الاستيراد..." : "مزامنة أعضاء المجموعة"}</button>
             <p className="hint">الحسابات الجديدة تبدأ بكلمة مرور مؤقتة <bdi>123456</bdi> ورصيد صفر، وتحتاج إدخال الاسم عند أول دخول.</p>
           </article>

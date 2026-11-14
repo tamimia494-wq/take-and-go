@@ -10,20 +10,18 @@ function required(name: string): string {
   return value;
 }
 
-const greenApiGroupId = process.env.GREEN_API_GROUP_ID;
+// GREEN_API_* names are still read so existing deployments keep working without renaming their variables.
+const whatsappGroupId = process.env.WHATSAPP_GROUP_ID || process.env.GREEN_API_GROUP_ID;
 
 export const config = {
   port: Number(process.env.PORT ?? process.env.API_PORT ?? 4000),
   databaseUrl: required("DATABASE_URL"),
   jwtSecret: required("JWT_SECRET"),
-  webhookToken: process.env.GREEN_API_WEBHOOK_TOKEN || undefined,
-  greenApiUrl: (process.env.GREEN_API_URL ?? "https://api.green-api.com").replace(/\/$/, ""),
-  greenApiInstanceId: process.env.GREEN_API_INSTANCE_ID || undefined,
-  greenApiToken: process.env.GREEN_API_TOKEN || undefined,
-  greenApiGroupId: greenApiGroupId && /^\d+$/.test(greenApiGroupId)
-    ? `${greenApiGroupId}@g.us`
-    : greenApiGroupId,
-  excludedAdminPhones: (process.env.GREEN_API_EXCLUDED_PHONES ?? "").split(/[;,\s]+/).filter(Boolean),
+  whatsappGroupId: whatsappGroupId && /^\d+$/.test(whatsappGroupId)
+    ? `${whatsappGroupId}@g.us`
+    : whatsappGroupId,
+  excludedAdminPhones: (process.env.WHATSAPP_EXCLUDED_PHONES || process.env.GREEN_API_EXCLUDED_PHONES || "")
+    .split(/[;,\s]+/).filter(Boolean),
   captainAppUrl: process.env.CAPTAIN_APP_URL ?? "http://localhost:3001",
   adminAppUrl: process.env.ADMIN_APP_URL ?? "http://localhost:3002",
   customerAppUrl: process.env.CUSTOMER_APP_URL ?? "http://localhost:3000",

@@ -1,4 +1,4 @@
-import type { GroupMember } from "./green-api";
+type GroupMember = { phone: string | null; isAdmin: boolean };
 
 // Who leaves the WhatsApp group: members whose account is not active (not activated yet or suspended) or whose
 // balance reached 0. Group admins, protected numbers and numbers without an account are never removed.

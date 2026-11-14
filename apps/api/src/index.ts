@@ -9,7 +9,8 @@ import { repairCommissions } from "./commission-repair";
 import { removeIneligibleGroupMembers } from "./group-removal";
 import { hasStoredSession, onSocketGroupMessage, startWhatsAppSocket } from "./whatsapp-socket";
 import { router } from "./routes";
-import { enqueueIncomingWebhook, receiveGreenApiWebhook, replayRecentMessages, retryPendingGreenApiWebhooks, sweepUnauthorizedMessages } from "./whatsapp";
+import { pruneGroupMessages } from "./message-store";
+import { enqueueIncomingWebhook, replayRecentMessages, retryPendingWhatsAppEvents, sweepUnauthorizedMessages } from "./whatsapp";
 
 const app = express();
 // Each *_APP_URL may list several origins separated by commas (e.g. a Railway domain plus a custom domain).
@@ -30,10 +31,16 @@ app.use(cors({
 }));
 app.use("/api/captain/topup", express.json({ limit: "6mb" }));
 app.use(express.json({ limit: "256kb" }));
-app.post("/webhooks/green-api", receiveGreenApiWebhook);
 app.use("/api", router);
 
 app.get("/", (_req, res) => res.json({ service: "take-and-go-api", status: "ok" }));
+
+// Group messages older than 3 days are no longer needed for recovery.
+cron.schedule("17 * * * *", () => {
+  void pruneGroupMessages().catch((error: unknown) => {
+    console.error("Pruning stored WhatsApp messages failed:", error);
+  });
+});
 
 cron.schedule("59 23 * * 4", () => {
   void chargeWeeklyFloor().catch((error: unknown) => {
@@ -98,8 +105,8 @@ cron.schedule("*/5 * * * *", () => {
 });
 
 cron.schedule("* * * * *", () => {
-  void retryPendingGreenApiWebhooks().catch((error: unknown) => {
-    console.error("Pending Green API webhook retry failed:", error);
+  void retryPendingWhatsAppEvents().catch((error: unknown) => {
+    console.error("Pending WhatsApp message retry failed:", error);
   });
 });
 
@@ -107,7 +114,7 @@ void chargeWeeklyFloorIfDue().catch((error: unknown) => {
   console.error("Weekly group-floor catch-up failed:", error);
 });
 
-// Group messages from the linked WhatsApp socket go through the same inbox as Green API webhooks.
+// Group messages from the linked WhatsApp socket are stored and processed through the message inbox.
 onSocketGroupMessage(enqueueIncomingWebhook);
 void hasStoredSession()
   .then((linked) => (linked ? startWhatsAppSocket() : undefined))

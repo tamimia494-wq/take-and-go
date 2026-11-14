@@ -1,9 +1,8 @@
 import bcrypt from "bcryptjs";
 import { JobCategory, Prisma, WebhookEventStatus } from "@prisma/client";
-import type { Request, Response } from "express";
 import { config } from "./config";
 import { prisma } from "./db";
-import { deleteGroupMessage, fetchGroupHistory, fetchGroupMessage, fetchRecentIncomingMessages, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, GreenApiRequestError, greenApiRequest, resolveGroupSenderPhone, sendPrivateMessage } from "./green-api";
+import { deleteGroupMessage, fetchGroupHistory, fetchGroupMessage, getBotPhone, getGroupMembers, isGroupAdmin, resolveGroupSenderPhone, sendPrivateMessage } from "./whatsapp-client";
 import {
   CAPTAIN_RESERVED_BALANCE_FILS,
   hasSufficientCaptainReplyBalance,
@@ -11,7 +10,7 @@ import {
   phoneFromChatId,
   requiredCaptainReplyBalanceFils
 } from "./money";
-import { rememberMessageParticipant } from "./whatsapp-socket";
+import { isSocketConnected, rememberMessageParticipant, WhatsAppNotConnectedError } from "./whatsapp-socket";
 import { cancelChargedJob, processJobReaction, removeJobLike } from "./accounting";
 import { calculateCommissionFils, extractPriceAfterLabel } from "./pricing";
 import { isCancellationReaction, isLikeReaction } from "./reactions";
@@ -22,7 +21,7 @@ type Webhook = {
   timestamp?: number;
   senderData?: { chatId?: string; sender?: string };
   messageData?: Record<string, unknown>;
-  // Green API journal records can also be replayed to this endpoint.
+  // Message-store journal records use these fields.
   type?: string;
   chatId?: string;
   senderId?: string;
@@ -32,17 +31,16 @@ type Webhook = {
 };
 
 export async function importGroupCaptains(): Promise<{ imported: number; total: number; skipped: string[] }> {
-  const participantIds = await getGroupParticipants();
+  const members = await getGroupMembers(true);
   const phones = new Set<string>();
-  for (const id of participantIds) {
-    const phone = phoneFromChatId(id);
-    if (phone) phones.add(phone);
+  for (const member of members) {
+    if (member.phone) phones.add(member.phone);
   }
 
   // استثناء رقم الـ Instance نفسه (صاحب الجروب/الإدارة) وأرقام الإدارة الإضافية
   const excluded = new Set<string>();
-  const instancePhone = await getInstancePhone().catch(() => null);
-  if (instancePhone) excluded.add(instancePhone);
+  const botPhone = getBotPhone();
+  if (botPhone) excluded.add(botPhone);
   for (const raw of config.excludedAdminPhones) {
     try {
       excluded.add(normalizePhone(raw));
@@ -60,37 +58,9 @@ export async function importGroupCaptains(): Promise<{ imported: number; total: 
   return { imported: created.count, total: phones.size, skipped: [...excluded] };
 }
 
-export async function receiveGreenApiWebhook(req: Request, res: Response): Promise<void> {
-  if (!config.webhookToken || !config.greenApiGroupId) {
-    res.status(503).json({ error: "Green API integration is not configured." });
-    return;
-  }
-  const auth = req.header("authorization") ?? "";
-  const token = auth.replace(/^(Bearer|Basic)\s+/i, "");
-  if (token !== config.webhookToken) {
-    res.status(401).json({ error: "Unauthorized webhook." });
-    return;
-  }
-  const webhook = req.body as Webhook;
-  const incoming = normalizeIncomingWebhook(webhook);
-  if (!incoming) {
-    res.sendStatus(200);
-    return;
-  }
-
-  try {
-    await enqueueIncomingWebhook(incoming);
-  } catch (error) {
-    console.error("Could not persist Green API webhook for processing:", error);
-    res.status(503).json({ error: "Webhook could not be safely stored; please retry." });
-    return;
-  }
-  res.sendStatus(200);
-}
-
 /**
- * Stores a group message and processes it once. Green API webhooks and the linked WhatsApp socket share the
- * WhatsApp message id, so a message arriving from both is handled only once.
+ * Stores a group message and processes it once, keyed by its WhatsApp message id, so a message delivered twice
+ * (for example again after a reconnect) is handled only once.
  */
 export async function enqueueIncomingWebhook(incoming: Webhook): Promise<void> {
   const event = await prisma.whatsAppWebhookEvent.upsert({
@@ -107,7 +77,7 @@ export async function enqueueIncomingWebhook(incoming: Webhook): Promise<void> {
   }
 }
 
-export async function retryPendingGreenApiWebhooks(): Promise<void> {
+export async function retryPendingWhatsAppEvents(): Promise<void> {
   const now = new Date();
   const pending = await prisma.whatsAppWebhookEvent.findMany({
     where: { OR: [
@@ -156,8 +126,7 @@ async function processWebhookEvent(eventId: string): Promise<void> {
     });
   } catch (error) {
     const ageMs = Date.now() - event.createdAt.getTime();
-    const terminal = ageMs >= 60 * 60 * 60 * 1000 ||
-      (error instanceof GreenApiRequestError && error.status === 466);
+    const terminal = ageMs >= 60 * 60 * 60 * 1000;
     const backoffMs = Math.min(15 * 60_000, 30_000 * 2 ** Math.min(event.attempts, 5));
     await prisma.whatsAppWebhookEvent.update({
       where: { id: eventId },
@@ -170,9 +139,9 @@ async function processWebhookEvent(eventId: string): Promise<void> {
       }
     });
     if (terminal) {
-      console.error(`Green API webhook ${event.eventId} failed after its retry window:`, error);
+      console.error(`WhatsApp message ${event.eventId} failed after its retry window:`, error);
     } else {
-      console.warn(`Green API webhook ${event.eventId} will be retried:`, error);
+      console.warn(`WhatsApp message ${event.eventId} will be retried:`, error);
     }
   }
 }
@@ -180,7 +149,9 @@ async function processWebhookEvent(eventId: string): Promise<void> {
 export async function replayRecentMessages(minutes = 15): Promise<{ replayed: number; skipped: number }> {
   let history: unknown[] = [];
   try {
-    history = await fetchRecentIncomingMessages(minutes);
+    const cutoff = Date.now() / 1000 - minutes * 60;
+    history = (await fetchGroupHistory(Math.max(100, minutes * 10)))
+      .filter((entry) => entry.isDeleted !== true && Number(entry.timestamp ?? 0) >= cutoff);
   } catch (error) {
     console.error("Could not fetch chat history for replay:", error);
     return { replayed: 0, skipped: 0 };
@@ -211,7 +182,7 @@ export async function replayRecentMessages(minutes = 15): Promise<{ replayed: nu
         typeWebhook: "incomingMessageReceived",
         idMessage: messageId,
         timestamp: typeof record.timestamp === "number" ? record.timestamp : undefined,
-        senderData: { chatId: config.greenApiGroupId, sender: senderId },
+        senderData: { chatId: config.whatsappGroupId, sender: senderId },
         messageData
       };
       const event = await prisma.whatsAppWebhookEvent.upsert({
@@ -319,6 +290,7 @@ async function findOrRecoverJob(groupId: string, sourceMessageId: string) {
   if (job) return job;
   try {
     const order = await fetchGroupMessage(sourceMessageId);
+    if (!order) return null;
     const orderText = journalText(order);
     const orderSenderId = stringValue(order.senderId) ?? "";
     const orderSender = phoneFromChatId(orderSenderId) ?? (orderSenderId ? await resolveGroupSenderPhone(orderSenderId) : null);
@@ -337,15 +309,16 @@ async function findOrRecoverJob(groupId: string, sourceMessageId: string) {
  * missing too, by reading both messages from WhatsApp.
  */
 async function recordMissedReply(replyMessageId: string): Promise<void> {
-  const groupId = config.greenApiGroupId;
+  const groupId = config.whatsappGroupId;
   if (!groupId) return;
-  let replyMessage: Record<string, unknown>;
+  let replyMessage: Record<string, unknown> | null;
   try {
     replyMessage = await fetchGroupMessage(replyMessageId);
   } catch (error) {
-    console.warn(`Could not fetch liked reply ${replyMessageId} from WhatsApp:`, error);
+    console.warn(`Could not read liked reply ${replyMessageId} from the message store:`, error);
     return;
   }
+  if (!replyMessage) return;
   const sourceMessageId = journalQuotedId(replyMessage);
   const replySenderId = stringValue(replyMessage.senderId) ?? "";
   const replySender = phoneFromChatId(replySenderId) ?? (replySenderId ? await resolveGroupSenderPhone(replySenderId) : null);
@@ -378,7 +351,7 @@ async function recordMissedReply(replyMessageId: string): Promise<void> {
 async function recoverJobsAndRepliesFromHistory(
   history: Array<Record<string, unknown>>
 ): Promise<{ jobsRecorded: number; repliesRecorded: number }> {
-  const groupId = config.greenApiGroupId;
+  const groupId = config.whatsappGroupId;
   if (!groupId) return { jobsRecorded: 0, repliesRecorded: 0 };
   const oldestTimestamp = Date.now() / 1000 - 60 * 60 * 60;
   const messages = history
@@ -563,8 +536,9 @@ export async function sweepUnauthorizedMessages(count = 100): Promise<{ deleted:
 }
 
 async function sweepUnauthorizedMessagesOnce(count: number): Promise<{ deleted: number; unresolvedSenders: number }> {
-  const groupId = config.greenApiGroupId;
-  if (!groupId) return { deleted: 0, unresolvedSenders: 0 };
+  const groupId = config.whatsappGroupId;
+  // Nothing can be deleted while the link is down; the sweep picks the messages up once it reconnects.
+  if (!groupId || !isSocketConnected()) return { deleted: 0, unresolvedSenders: 0 };
   let unresolvedSenders = 0;
   const history = await fetchGroupHistory(count);
   const nowSeconds = Date.now() / 1000;
@@ -618,23 +592,8 @@ async function sweepUnauthorizedMessagesOnce(count: number): Promise<{ deleted: 
   return { deleted, unresolvedSenders };
 }
 
-function normalizeIncomingWebhook(webhook: Webhook): Webhook | null {
-  if (webhook.typeWebhook === "incomingMessageReceived") return webhook.idMessage ? webhook : null;
-  if (webhook.type !== "incoming" || webhook.isDeleted || !webhook.idMessage || !webhook.chatId) return null;
-  return {
-    typeWebhook: "incomingMessageReceived",
-    idMessage: webhook.idMessage,
-    timestamp: webhook.timestamp,
-    senderData: { chatId: webhook.chatId, sender: webhook.senderId },
-    messageData: {
-      typeMessage: webhook.typeMessage,
-      ...(webhook.textMessage === undefined ? {} : { textMessageData: { textMessage: webhook.textMessage } })
-    }
-  };
-}
-
 async function processIncomingWebhook(webhook: Webhook): Promise<void> {
-  const groupId = config.greenApiGroupId;
+  const groupId = config.whatsappGroupId;
   const chatId = webhook.senderData?.chatId;
   const data = webhook.messageData;
   const messageId = webhook.idMessage;
@@ -645,11 +604,11 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     const ageMs = Date.now() - webhook.timestamp * 1000;
     const allParticipantsDeleteWindowMs = 60 * 60 * 60 * 1000;
     if (ageMs > allParticipantsDeleteWindowMs) {
-      console.warn(`Skipping Green API message ${messageId}: it is older than WhatsApp's 60-hour delete window.`);
+      console.warn(`Skipping WhatsApp message ${messageId}: it is older than WhatsApp's 60-hour delete window.`);
       return;
     }
     if (ageMs < -5 * 60 * 1000) {
-      console.warn(`Skipping Green API message ${messageId}: its timestamp is more than 5 minutes in the future.`);
+      console.warn(`Skipping WhatsApp message ${messageId}: its timestamp is more than 5 minutes in the future.`);
       return;
     }
   }
@@ -663,7 +622,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   const senderId = webhook.senderData?.sender ?? webhook.senderData?.chatId ?? "";
   const senderPhone = phoneFromChatId(senderId) ?? (senderId ? await resolveGroupSenderPhone(senderId) : null);
   if (!senderPhone) {
-    throw new Error(`Sender ID for Green API message ${messageId} could not be mapped to a phone number yet.`);
+    throw new Error(`Sender ID for WhatsApp message ${messageId} could not be mapped to a phone number yet.`);
   }
   const text = messageText(data);
   const sourceMessageId = quotedMessageId(data);
@@ -776,7 +735,9 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     let sourceSenderPhone = reply.job.sourceSenderPhone;
     if (!sourceSenderPhone) {
       try {
-        sourceSenderPhone = await getGroupMessageSenderPhone(reply.job.sourceMessageId);
+        const order = await fetchGroupMessage(reply.job.sourceMessageId);
+        const orderSenderId = order ? stringValue(order.senderId) : undefined;
+        sourceSenderPhone = orderSenderId ? await resolveGroupSenderPhone(orderSenderId) : null;
         if (sourceSenderPhone) {
           await prisma.whatsAppJob.updateMany({
             where: { id: reply.job.id, sourceSenderPhone: null },
@@ -784,14 +745,14 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
           });
         }
       } catch (error) {
-        console.error(`Could not recover owner of WhatsApp job ${reply.job.id} from Green API history:`, error);
+        console.error(`Could not recover owner of WhatsApp job ${reply.job.id} from the message store:`, error);
       }
     }
     if (!sourceSenderPhone) {
       throw new Error(`Owner phone for job ${reply.job.id} could not be resolved yet.`);
     }
     if (!samePhone(actor, sourceSenderPhone)) {
-      console.warn(`Green API 👍 reaction ${webhook.idMessage ?? "unknown"} ignored: it was not sent by the job owner.`);
+      console.warn(`👍 reaction ${webhook.idMessage ?? "unknown"} ignored: it was not sent by the job owner.`);
       return;
     }
     // Keep the owner's approval so an audit can still charge this reply if the charge below does not go through.
@@ -849,7 +810,7 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
       const matchingReplies = await prisma.whatsAppReply.findMany({
         where: {
           job: {
-            groupId: config.greenApiGroupId!,
+            groupId: config.whatsappGroupId!,
             sourceMessageId: targetMessageId
           },
           status: { in: ["CHARGED", "CANCELED"] }
@@ -868,7 +829,7 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     const isOwnerOrReplyingCaptain = [reply.senderPhone, reply.job.sourceSenderPhone]
       .some((phone) => phone && samePhone(phone, actor));
     if (!isOwnerOrReplyingCaptain && !(await isGroupAdministrator(actor))) {
-      console.warn(`Green API X reaction ${webhook.idMessage ?? "unknown"} ignored: actor is not authorized.`);
+      console.warn(`X reaction ${webhook.idMessage ?? "unknown"} ignored: actor is not authorized.`);
       return;
     }
 
@@ -894,14 +855,7 @@ function samePhone(left: string, right: string): boolean {
 }
 
 async function isGroupAdministrator(phone: string): Promise<boolean> {
-  const data = await greenApiRequest<{ participants?: Array<{ id?: string; participantId?: string; phoneNumber?: string; isAdmin?: boolean; isSuperAdmin?: boolean }> }>(
-    "getGroupData",
-    { groupId: config.greenApiGroupId }
-  );
-  return (data.participants ?? []).some((participant) => {
-    const id = participant.phoneNumber?.trim() || participant.id || participant.participantId || "";
-    return phoneFromChatId(id) === phone && (participant.isAdmin === true || participant.isSuperAdmin === true);
-  });
+  return isGroupAdmin(phone);
 }
 
 function messageText(data: Record<string, unknown>): string | null {
@@ -951,11 +905,12 @@ async function deleteRejectedReplyMessage(messageId: string): Promise<void> {
       return;
     } catch (error) {
       lastError = error;
-      if (error instanceof GreenApiRequestError && error.status === 466) break;
+      // Retrying now does not help while the link is down; the message is retried later.
+      if (error instanceof WhatsAppNotConnectedError) break;
       if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
     }
   }
-  console.error(`Green API could not delete rejected captain message ${messageId} after 5 attempts:`, lastError);
+  console.error(`Could not delete rejected captain message ${messageId}:`, lastError);
   rememberDeletionIssue(messageId, lastError);
   throw new Error("Could not delete rejected captain reply from the WhatsApp group.", { cause: lastError });
 }
