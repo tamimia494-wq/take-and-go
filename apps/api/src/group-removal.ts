@@ -69,11 +69,41 @@ export function syncGroupMembership(): Promise<GroupRemovalRun | null> {
   return running;
 }
 
-/** Starts a sync in the background, e.g. after a top-up, so the captain is back in the group within seconds. */
-export function startGroupSync(): void {
-  void syncGroupMembership().catch((error: unknown) => {
+/**
+ * Starts a sync in the background, e.g. after a top-up, so the captain is back in the group within seconds. A
+ * captain whose balance was just credited is added even if the system has no record of removing them.
+ */
+export function startGroupSync(toppedUpCaptainId?: string): void {
+  void (async () => {
+    if (toppedUpCaptainId) await addToppedUpCaptain(toppedUpCaptainId);
+    await syncGroupMembership();
+  })().catch((error: unknown) => {
     console.error("Group membership sync failed:", error);
   });
+}
+
+async function addToppedUpCaptain(captainId: string): Promise<void> {
+  if (!config.whatsappGroupId || !isSocketConnected()) return;
+  const captain = await prisma.captain.findUnique({ where: { id: captainId }, select: { phone: true, status: true, balanceFils: true } });
+  if (!captain || captain.status !== "ACTIVE" || captain.balanceFils <= 0) return;
+  await running?.catch(() => null);
+  const members = await getGroupMembers(true);
+  if (members.some((member) => member.phone === captain.phone)) return;
+  const result = await addGroupMembers([captain.phone]);
+  const added = result.done.includes(captain.phone);
+  if (added || result.failed.some((item) => item.status === "409")) {
+    await prisma.captain.updateMany({ where: { id: captainId }, data: { removedFromGroupAt: null } });
+  }
+  if (added) {
+    try {
+      await sendPrivateMessage(captain.phone, "✅ رجعناك على جروب Take & Go بعد شحن رصيدك. بالتوفيق!");
+    } catch (error) {
+      console.warn(`Could not send the re-add notice to ${captain.phone}:`, error);
+    }
+  } else {
+    const failure = result.failed[0];
+    console.warn(`Could not add ${captain.phone} to the group after a top-up: ${failure ? addFailureText(failure.status) : "no answer"}`);
+  }
 }
 
 async function runRemoval(): Promise<GroupRemovalRun | null> {
@@ -150,6 +180,45 @@ export async function setGroupRemovalExempt(phone: string, exempt: boolean): Pro
 const ADD_RETRY_MS = 30 * 60_000;
 const addRefusedAt = new Map<string, number>();
 
+export type AddToppedUpResult = { added: string[]; failed: Array<{ phone: string; error: string }>; alreadyIn: number };
+
+function addFailureText(status: string): string {
+  return status === "403"
+    ? "إعدادات الخصوصية عنده بتمنع إضافته للجروب"
+    : status === "408" ? "طلع من الجروب قريباً فواتساب مانع إضافته هلأ" : `واتساب رد ${status}`;
+}
+
+/**
+ * The admin's "add everyone who topped up" button: adds every captain with an active account and a balance above
+ * zero who is not in the group, including people removed before the system recorded removals.
+ */
+export async function addToppedUpCaptains(): Promise<AddToppedUpResult> {
+  await running?.catch(() => null);
+  const eligible = await prisma.captain.findMany({
+    where: { status: "ACTIVE", balanceFils: { gt: 0 } },
+    select: { phone: true }
+  });
+  const members = new Set((await getGroupMembers(true)).map((member) => member.phone).filter(Boolean));
+  const toAdd = eligible.map((captain) => captain.phone).filter((phone) => !members.has(phone));
+  const result = toAdd.length ? await addGroupMembers(toAdd) : { done: [], failed: [] };
+  const back = [...result.done, ...result.failed.filter((item) => item.status === "409").map((item) => item.phone)];
+  if (back.length) await prisma.captain.updateMany({ where: { phone: { in: back } }, data: { removedFromGroupAt: null } });
+  if (result.done.length <= MAX_NOTICES_PER_RUN) {
+    for (const phone of result.done) {
+      try {
+        await sendPrivateMessage(phone, "✅ رجعناك على جروب Take & Go بعد شحن رصيدك. بالتوفيق!");
+      } catch (error) {
+        console.warn(`Could not send the re-add notice to ${phone}:`, error);
+      }
+    }
+  }
+  return {
+    added: result.done,
+    failed: result.failed.filter((item) => item.status !== "409").map(({ phone, status }) => ({ phone, error: addFailureText(status) })),
+    alreadyIn: eligible.length - toAdd.length
+  };
+}
+
 async function addBackEligibleMembers(run: GroupRemovalRun): Promise<void> {
   const removed = await prisma.captain.findMany({
     where: { removedFromGroupAt: { not: null }, status: "ACTIVE", balanceFils: { gt: 0 } },
@@ -171,12 +240,7 @@ async function addBackEligibleMembers(run: GroupRemovalRun): Promise<void> {
   run.added = result.done;
   for (const { phone, status } of result.failed.filter((item) => item.status !== "409")) {
     addRefusedAt.set(phone, Date.now());
-    run.addFailed.push({
-      phone,
-      error: status === "403"
-        ? "إعدادات الخصوصية عنده بتمنع إضافته للجروب"
-        : status === "408" ? "طلع من الجروب قريباً فواتساب مانع إضافته هلأ" : `واتساب رد ${status}`
-    });
+    run.addFailed.push({ phone, error: addFailureText(status) });
   }
   if (result.done.length <= MAX_NOTICES_PER_RUN) {
     for (const phone of result.done) {

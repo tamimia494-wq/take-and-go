@@ -404,6 +404,27 @@ export default function AdminHome() {
     }
   }
 
+  async function addToppedUp() {
+    if (!window.confirm("إضافة كل اللي حسابهم مفعّل ورصيدهم أكثر من صفر ومش موجودين بالجروب؟")) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await api<{ added: string[]; failed: Array<{ phone: string; error: string }>; alreadyIn: number }>(
+        "/admin/group-removal/add-topped-up", token, { method: "POST" }
+      );
+      const lines = [result.added.length ? `✅ انضاف ${result.added.length} للجروب.` : "ما في حدا جديد لازم ينضاف."];
+      if (result.failed.length) {
+        lines.push(`❌ ما قدر يضيف ${result.failed.length}: ${result.failed.slice(0, 10).map((item) => `${item.phone} (${item.error})`).join("، ")}`);
+      }
+      setNotice(lines.join(" | "));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر الإضافة للجروب.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function exemptFromGroupRemoval(phone: string) {
     setBusy(true);
     setError("");
@@ -925,6 +946,7 @@ export default function AdminHome() {
               اللي بنشال بيرجع للجروب تلقائياً أول ما يشحن ويكون حسابه مفعّل، وإذا رجّعت حدا بإيدك النظام بيستثنيه وما بيشيله مرة ثانية. يضل 0.5 د.أ محجوزة عند كل كابتن لأرضية الجروب، ومعها بيضل بالجروب ويقدر ينزّل طلبات، بس ما بياخذ طلب إلا إذا ضل معه 0.5 بعد العمولة.
             </p>
             <button className="button ghost full" disabled={busy} onClick={() => void loadGroupRemoval()}><Users size={17} /> عرض مين رح ينشال</button>
+            <button className="button ghost full" disabled={busy} onClick={() => void addToppedUp()}><UserRoundPlus size={17} /> إضافة اللي شحنوا رصيدهم</button>
             <button className={`button full ${overview?.groupRemovalEnabled ? "ghost" : "primary"}`} disabled={busy} onClick={() => void setGroupRemovalEnabled(!overview?.groupRemovalEnabled)}>
               {overview?.groupRemovalEnabled ? "إيقاف الإزالة التلقائية" : "تشغيل الإزالة التلقائية"}
             </button>

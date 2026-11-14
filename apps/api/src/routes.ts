@@ -9,7 +9,7 @@ import { commissionUnits } from "./pricing";
 import { buildStatement, statementPeriod, sumStatements, type StatementEntry } from "./statement";
 import { CAPTAIN_RESERVED_BALANCE_FILS, fromFils, hasSufficientCaptainReplyBalance, normalizePhone, phoneFromChatId, toFils } from "./money";
 import { getDeletionStatus, importGroupCaptains, isExcludedPhone } from "./whatsapp";
-import { getLastGroupRemovalRun, previewGroupRemovals, setGroupRemovalExempt, startGroupSync, syncGroupMembership } from "./group-removal";
+import { addToppedUpCaptains, getLastGroupRemovalRun, previewGroupRemovals, setGroupRemovalExempt, startGroupSync, syncGroupMembership } from "./group-removal";
 import { getSocketState, logoutWhatsAppSocket, startWhatsAppSocket } from "./whatsapp-socket";
 import QRCode from "qrcode";
 import { getBotPhone, getGroupMembers, getLastDeletionStatus } from "./whatsapp-client";
@@ -803,7 +803,7 @@ router.post("/admin/captains/:id/balance", requireAuth("admin"), async (req, res
     });
     return updated;
   });
-  startGroupSync();
+  startGroupSync(result.id);
   res.json({ balanceJod: fromFils(result.balanceFils) });
 });
 
@@ -880,7 +880,7 @@ router.post("/admin/captains/adjust", requireAuth("admin"), async (req, res) => 
       });
       return { captain, updated, amountFils: credit ? amountFils : debitAmountFils };
     });
-    startGroupSync();
+    startGroupSync(parsed.data.action === "credit" ? result.captain.id : undefined);
     res.json({
       fullName: result.captain.fullName,
       phone: result.captain.phone,
@@ -1079,6 +1079,14 @@ router.get("/admin/group-removal", requireAuth("admin"), async (_req, res) => {
   res.json(result);
 });
 
+router.post("/admin/group-removal/add-topped-up", requireAuth("admin"), async (_req, res) => {
+  try {
+    res.json(await addToppedUpCaptains());
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : "تعذر الإضافة للجروب." });
+  }
+});
+
 router.put("/admin/group-removal/exempt", requireAuth("admin"), async (req, res) => {
   const parsed = z.object({ phone: z.string(), exempt: z.boolean() }).safeParse(req.body);
   let phone: string | null = null;
@@ -1271,7 +1279,7 @@ router.post("/admin/topups/:id/approve", requireAuth("admin"), async (req, res) 
       });
       return updated;
     });
-    startGroupSync();
+    startGroupSync(result.id);
     res.json({ balanceJod: fromFils(result.balanceFils) });
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : "تعذر اعتماد الطلب." });
