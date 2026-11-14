@@ -14,6 +14,12 @@ enum CaptainStatus {
   SUSPENDED
 }
 
+/// Whether a captain mostly posts orders (producer) or takes them (consumer); set by the admin.
+enum CaptainAccountType {
+  PRODUCER
+  CONSUMER
+}
+
 enum CaptainAccountRequestStatus {
   PENDING
   APPROVED
@@ -81,6 +87,7 @@ model Captain {
   groupRemovalExempt Boolean   @default(false)
   /// The e-wallet or CliQ number withdrawals are paid to, entered by the captain.
   payoutAccount  String?
+  accountType    CaptainAccountType?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   ledgerEntries  LedgerEntry[]

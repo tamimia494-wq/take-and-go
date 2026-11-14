@@ -14,8 +14,15 @@ export type Captain = {
   fullName: string | null;
   status: "ACTIVE" | "PENDING_PROFILE" | "SUSPENDED";
   balanceJod: number;
+  accountType: "PRODUCER" | "CONSUMER" | null;
   createdAt: string;
 };
+
+export function accountTypeLabel(type: Captain["accountType"]): string {
+  if (type === "PRODUCER") return "منتج";
+  if (type === "CONSUMER") return "مستهلك";
+  return "غير محدد";
+}
 
 export async function api<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API}${path}`, {

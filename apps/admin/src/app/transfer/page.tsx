@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CircleDollarSign, RefreshCw } from "lucide-react";
-import { AdminFrame, api, LoginRequired, matchesCaptain, money, statusLabel, useAdminToken, type Captain } from "../admin-kit";
+import { accountTypeLabel, AdminFrame, api, LoginRequired, matchesCaptain, money, statusLabel, useAdminToken, type Captain } from "../admin-kit";
 import { amountInput } from "../amount";
 
 // The commission-transfer form on its own page: every captain is listed, and the admin marks one as the consumer
@@ -108,11 +108,12 @@ export default function TransferPage() {
           <button type="button" className="button ghost" disabled={busy} onClick={() => void load(token)}><RefreshCw size={16} /> تحديث</button>
         </div>
         <div className="table-wrap">
-          <table><thead><tr><th>الكابتن / الهاتف</th><th>الرصيد</th><th>الحالة</th><th>اختيار</th></tr></thead>
+          <table><thead><tr><th>الكابتن / الهاتف</th><th>الرصيد</th><th>نوع الحساب</th><th>الحالة</th><th>اختيار</th></tr></thead>
             <tbody>{visible.map((captain) => (
               <tr key={captain.id}>
                 <td data-label="الكابتن / الهاتف"><span className="captain-avatar">{(captain.fullName ?? "؟").slice(0, 1)}</span><span className="captain-identity"><strong>{captain.fullName ?? "بانتظار تفعيل الحساب"}</strong><small dir="ltr">{captain.phone}</small></span></td>
                 <td data-label="الرصيد" className="money-cell">{money(captain.balanceJod)} د.أ</td>
+                <td data-label="نوع الحساب">{accountTypeLabel(captain.accountType)}</td>
                 <td data-label="الحالة"><span className={`status-pill ${captain.status.toLowerCase()}`}>{statusLabel(captain.status)}</span></td>
                 <td data-label="اختيار"><div className="row-actions">
                   <button type="button" className={consumer?.id === captain.id ? "button small debit" : "button small ghost"} onClick={() => choose(captain, "consumer")}>

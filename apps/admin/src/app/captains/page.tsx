@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowUpLeft, CircleDollarSign, KeyRound, RefreshCw, Wallet } from "lucide-react";
-import { AdminFrame, api, LoginRequired, matchesCaptain, money, statusLabel, useAdminToken, type Captain } from "../admin-kit";
+import { accountTypeLabel, AdminFrame, api, LoginRequired, matchesCaptain, money, statusLabel, useAdminToken, type Captain } from "../admin-kit";
 import { amountInput } from "../amount";
 import { CaptainStatementSheet, CloseStatementButton, dateInputStyle, dateLabelStyle, defaultPeriod, downloadPdf, type CaptainWithStatement } from "../statement";
 
@@ -47,7 +47,7 @@ export default function CaptainsPage() {
   const visible = captains.filter((captain) => matchesCaptain(captain, query));
 
   return (
-    <AdminFrame title="إدارة الكباتن" subtitle="كل الكباتن عندك. اكبس «إدارة الكابتن» لتشحن رصيده أو تخصم منه أو تشوف كشف حسابه.">
+    <AdminFrame title="إدارة الكباتن" subtitle="كل الكباتن عندك. حدد نوع حساب كل كابتن (منتج أو مستهلك)، واكبس «إدارة الكابتن» لتشحن رصيده أو تخصم منه أو تشوف كشف حسابه.">
       {error && <p className="error" role="alert">{error}</p>}
       {notice && <p className="notice" role="status">{notice}</p>}
       <section className="panel captains-panel">
@@ -57,7 +57,7 @@ export default function CaptainsPage() {
           <button type="button" className="button ghost" disabled={busy} onClick={() => void load(token)}><RefreshCw size={16} /> تحديث</button>
         </div>
         <div className="table-wrap">
-          <table><thead><tr><th>الكابتن / الهاتف</th><th>الرصيد</th><th>الحالة</th><th>إجراءات</th></tr></thead>
+          <table><thead><tr><th>الكابتن / الهاتف</th><th>الرصيد</th><th>الحالة</th><th>نوع الحساب</th><th>إجراءات</th></tr></thead>
             <tbody>{visible.map((captain) => (
               <CaptainRow
                 key={captain.id}
@@ -94,6 +94,22 @@ function CaptainRow({ captain, token, open, busy, onToggle, perform, onError }: 
         <td data-label="الكابتن / الهاتف"><span className="captain-avatar">{(captain.fullName ?? "؟").slice(0, 1)}</span><span className="captain-identity"><strong>{captain.fullName ?? "بانتظار تفعيل الحساب"}</strong><small dir="ltr">{captain.phone}</small></span></td>
         <td data-label="الرصيد" className="money-cell">{money(captain.balanceJod)} د.أ</td>
         <td data-label="الحالة"><span className={`status-pill ${captain.status.toLowerCase()}`}>{statusLabel(captain.status)}</span></td>
+        <td data-label="نوع الحساب"><div className="row-actions">
+          {(["PRODUCER", "CONSUMER"] as const).map((type) => (
+            <button
+              key={type}
+              type="button"
+              className={captain.accountType === type ? `button small ${type === "PRODUCER" ? "credit" : "debit"}` : "button small ghost"}
+              disabled={busy}
+              aria-pressed={captain.accountType === type}
+              onClick={() => void perform(async () => {
+                const next = captain.accountType === type ? null : type;
+                await api(`/admin/captains/${captain.id}/account-type`, token, { method: "PUT", body: JSON.stringify({ accountType: next }) });
+                return `نوع حساب ${who}: ${accountTypeLabel(next)}.`;
+              })}
+            >{captain.accountType === type ? `✓ ${accountTypeLabel(type)}` : accountTypeLabel(type)}</button>
+          ))}
+        </div></td>
         <td data-label="إجراءات"><div className="row-actions">
           <button type="button" className={open ? "button small primary" : "button small ghost"} aria-expanded={open} onClick={onToggle}>
             <Wallet size={14} /> {open ? "إغلاق" : "إدارة الكابتن"}
@@ -102,7 +118,7 @@ function CaptainRow({ captain, token, open, busy, onToggle, perform, onError }: 
       </tr>
       {open && (
         <tr>
-          <td colSpan={4}>
+          <td colSpan={5}>
             <div style={{ display: "grid", gap: 16 }}>
               <AdjustForm captain={captain} token={token} busy={busy} perform={perform} />
               <StatementBox captain={captain} token={token} onError={onError} />

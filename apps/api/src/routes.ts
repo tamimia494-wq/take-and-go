@@ -419,9 +419,24 @@ router.get("/admin/phone-lookup", requireAuth("admin"), async (req, res) => {
 router.get("/admin/captains", requireAuth("admin"), async (_req, res) => {
   const captains = await prisma.captain.findMany({
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-    select: { id: true, phone: true, fullName: true, status: true, balanceFils: true, createdAt: true }
+    select: { id: true, phone: true, fullName: true, status: true, balanceFils: true, accountType: true, createdAt: true }
   });
   res.json(captains.map((captain) => ({ ...captain, balanceJod: fromFils(captain.balanceFils) })));
+});
+
+router.put("/admin/captains/:id/account-type", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({ accountType: z.enum(["PRODUCER", "CONSUMER"]).nullable() }).safeParse(req.body);
+  const captainId = req.params.id;
+  if (!parsed.success || typeof captainId !== "string") {
+    res.status(400).json({ error: "نوع الحساب غير صالح." });
+    return;
+  }
+  const updated = await prisma.captain.updateMany({ where: { id: captainId }, data: { accountType: parsed.data.accountType } });
+  if (updated.count !== 1) {
+    res.status(404).json({ error: "الكابتن غير موجود." });
+    return;
+  }
+  res.json({ accountType: parsed.data.accountType });
 });
 
 router.post("/admin/captains", requireAuth("admin"), async (req, res) => {
