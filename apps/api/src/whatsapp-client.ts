@@ -3,7 +3,7 @@ import {
   deleteViaSocket,
   getGroupParticipantsViaSocket,
   getSocketState,
-  removeParticipantViaSocket,
+  removeParticipantsViaSocket,
   sendPrivateViaSocket,
   sendViaSocket
 } from "./whatsapp-socket";
@@ -54,8 +54,8 @@ export async function getGroupMembers(fresh = false): Promise<GroupMember[]> {
   }));
 }
 
-export async function removeGroupMember(phone: string): Promise<void> {
-  await removeParticipantViaSocket(phone);
+export async function removeGroupMembers(phones: string[]): Promise<{ removed: string[]; failed: Array<{ phone: string; error: string }> }> {
+  return removeParticipantsViaSocket(phones);
 }
 
 /** Maps a sender id (a phone JID or an anonymous @lid id) to a phone number using the group's member list. */

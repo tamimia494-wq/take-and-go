@@ -1,14 +1,17 @@
 import { config } from "./config";
 import { prisma } from "./db";
-import { getBotPhone, getGroupMembers, removeGroupMember, sendPrivateMessage } from "./whatsapp-client";
+import { getBotPhone, getGroupMembers, removeGroupMembers, sendPrivateMessage } from "./whatsapp-client";
 import { removalReason, selectMembersToRemove, type RemovalCandidate, type RemovalReason } from "./group-removal-rules";
 import { phoneFromChatId } from "./money";
 
 // Members whose account is not active (not activated yet or suspended) or whose balance reached 0 are removed
 // from the WhatsApp group. Admin numbers, the bot, group admins and numbers without an account are never removed.
 
-/** Removal runs at most this many members per run, so a big first run is spread out instead of hitting WhatsApp at once. */
-const REMOVALS_PER_RUN = 10;
+/**
+ * A run that removes more members than this sends no private notices: hundreds of private messages at once could
+ * get the bot number blocked. That is the first run after removal is turned on; later runs catch a few at a time.
+ */
+const MAX_NOTICES_PER_RUN = 20;
 
 function protectedPhones(): Set<string> {
   const phones = new Set<string>();
@@ -45,25 +48,39 @@ export function getLastGroupRemovalRun(): GroupRemovalRun | null {
   return lastRun;
 }
 
-/** Removes ineligible members when the admin turned removal on. Each one is re-checked just before removal. */
-export async function removeIneligibleGroupMembers(): Promise<GroupRemovalRun | null> {
+let running: Promise<GroupRemovalRun | null> | null = null;
+
+/** Removes every ineligible member at once when the admin turned removal on. Runs one at a time. */
+export function removeIneligibleGroupMembers(): Promise<GroupRemovalRun | null> {
+  running ??= runRemoval().finally(() => {
+    running = null;
+  });
+  return running;
+}
+
+async function runRemoval(): Promise<GroupRemovalRun | null> {
   if (!config.whatsappGroupId) return null;
   const settings = await prisma.appSettings.findUnique({ where: { id: "default" }, select: { groupRemovalEnabled: true } });
   if (!settings?.groupRemovalEnabled) return null;
   const run: GroupRemovalRun = { at: new Date().toISOString(), removed: [], failed: [], error: null };
   try {
     const { candidates } = await previewGroupRemovals();
-    for (const candidate of candidates.slice(0, REMOVALS_PER_RUN)) {
-      // A top-up or activation may have landed while the group was being read.
-      const current = await prisma.captain.findUnique({ where: { phone: candidate.phone }, select: { status: true, balanceFils: true } });
-      const reason = current ? removalReason(current) : null;
-      if (!reason) continue;
-      try {
-        await removeGroupMember(candidate.phone);
-        run.removed.push(candidate.phone);
-        await notifyRemoval(candidate.phone, reason);
-      } catch (error) {
-        run.failed.push({ phone: candidate.phone, error: error instanceof Error ? error.message : String(error) });
+    // A top-up or activation may have landed while the group was being read.
+    const current = await prisma.captain.findMany({
+      where: { phone: { in: candidates.map((candidate) => candidate.phone) } },
+      select: { phone: true, status: true, balanceFils: true }
+    });
+    const reasons = new Map<string, RemovalReason>();
+    for (const captain of current) {
+      const reason = removalReason(captain);
+      if (reason) reasons.set(captain.phone, reason);
+    }
+    if (reasons.size) {
+      const result = await removeGroupMembers([...reasons.keys()]);
+      run.removed = result.removed;
+      run.failed = result.failed;
+      if (result.removed.length <= MAX_NOTICES_PER_RUN) {
+        for (const phone of result.removed) await notifyRemoval(phone, reasons.get(phone)!);
       }
     }
   } catch (error) {

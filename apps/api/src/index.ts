@@ -85,11 +85,8 @@ cron.schedule("* * * * *", () => {
     });
 });
 
-// Removes members whose account is not active or whose balance is 0 (only while the admin has it turned on).
-let groupRemovalRunning = false;
-cron.schedule("*/5 * * * *", () => {
-  if (groupRemovalRunning) return;
-  groupRemovalRunning = true;
+// Removes members whose account is not active or whose balance is 0, every minute while the admin has it turned on.
+cron.schedule("* * * * *", () => {
   void removeIneligibleGroupMembers()
     .then((run) => {
       if (run?.removed.length) console.info(`Group removal removed ${run.removed.length} members.`);
@@ -98,9 +95,6 @@ cron.schedule("*/5 * * * *", () => {
     })
     .catch((error: unknown) => {
       console.error("Group removal failed:", error);
-    })
-    .finally(() => {
-      groupRemovalRunning = false;
     });
 });
 

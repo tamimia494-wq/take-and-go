@@ -111,15 +111,27 @@ export async function getGroupParticipantsViaSocket(fresh = false): Promise<Sock
   return participants;
 }
 
-/** Removes a member from the group. Throws when WhatsApp does not confirm the removal. */
-export async function removeParticipantViaSocket(phone: string): Promise<void> {
+/**
+ * Removes members from the group, many per WhatsApp request. Returns the phones WhatsApp confirmed and, for the
+ * others, the status it answered with.
+ */
+export async function removeParticipantsViaSocket(phones: string[]): Promise<{ removed: string[]; failed: Array<{ phone: string; error: string }> }> {
   const { sock, groupId } = connectedSocket();
-  const results = await sock.groupParticipantsUpdate(groupId, [`${phone}@s.whatsapp.net`], "remove");
-  if (!results.some((result) => result.status === "200")) {
-    const statuses = results.map((result) => result.status).join(", ") || "no answer";
-    throw new Error(`WhatsApp did not confirm the removal (${statuses}); is the bot a group admin?`);
+  const removed: string[] = [];
+  const failed: Array<{ phone: string; error: string }> = [];
+  for (let start = 0; start < phones.length; start += 50) {
+    const chunk = phones.slice(start, start + 50);
+    const results = await sock.groupParticipantsUpdate(groupId, chunk.map((phone) => `${phone}@s.whatsapp.net`), "remove");
+    chunk.forEach((phone, index) => {
+      // In a LID-addressed group WhatsApp may answer with the anonymous id; then the answers follow the request order.
+      const result = results.find((item) => item.jid?.split("@")[0]?.split(":")[0] === phone) ??
+        (results.length === chunk.length ? results[index] : undefined);
+      if (result?.status === "200") removed.push(phone);
+      else failed.push({ phone, error: `WhatsApp answered ${result?.status ?? "nothing"}; is the bot a group admin?` });
+    });
   }
   participantsCache = null;
+  return { removed, failed };
 }
 
 export async function sendPrivateViaSocket(phone: string, message: string): Promise<void> {

@@ -405,13 +405,16 @@ export default function AdminHome() {
   }
 
   async function setGroupRemovalEnabled(enabled: boolean) {
-    if (enabled && !window.confirm("تشغيل الإزالة التلقائية؟ كل عضو حسابه غير مفعل أو رصيده صفر رح ينشال من الجروب (10 أعضاء كل 5 دقائق).")) return;
+    if (enabled && !window.confirm("تشغيل الإزالة؟ كل عضو حسابه غير مفعل أو رصيده صفر رح ينشال من الجروب هسا مرة وحدة، وبعدها أي حدا بصير هيك بنشال خلال دقيقة.")) return;
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      await api("/admin/group-removal", token, { method: "PUT", body: JSON.stringify({ enabled }) });
-      setNotice(enabled ? "تم تشغيل الإزالة التلقائية من الجروب." : "تم إيقاف الإزالة التلقائية من الجروب.");
+      const result = await api<{ run: GroupRemoval["lastRun"] }>("/admin/group-removal", token, { method: "PUT", body: JSON.stringify({ enabled }) });
+      const run = result.run;
+      setNotice(!enabled ? "تم إيقاف الإزالة التلقائية من الجروب."
+        : run?.error ? `تم التشغيل، بس الإزالة فشلت: ${run.error}`
+        : `تم التشغيل وانشال ${run?.removed.length ?? 0} عضو${run?.failed.length ? `، وفشل ${run.failed.length} (${run.failed[0]!.error})` : ""}.`);
       await refresh(token);
       if (groupRemoval) setGroupRemoval({ ...groupRemoval, enabled });
     } catch (reason) {
@@ -902,7 +905,7 @@ export default function AdminHome() {
             )}
           </article>
           <article className="panel">
-            <div className="panel-heading"><span className="panel-icon"><Users size={19} /></span><div><h2>إزالة من الجروب</h2><p>تلقائياً كل 5 دقائق: الحساب غير المفعل أو الرصيد صفر</p></div></div>
+            <div className="panel-heading"><span className="panel-icon"><Users size={19} /></span><div><h2>إزالة من الجروب</h2><p>الحساب غير المفعل أو الرصيد صفر: الكل مرة وحدة، وبعدها خلال دقيقة</p></div></div>
             <p className="hint">
               {overview?.groupRemovalEnabled ? "✅ الإزالة التلقائية شغالة." : "⏸️ الإزالة التلقائية موقفة."} أرقام الإدارة والبوت ومشرفي الجروب والأرقام بدون حساب ما بتنشال.
               يضل 0.5 د.أ محجوزة عند كل كابتن لأرضية الجروب، ومعها بيضل بالجروب ويقدر ينزّل طلبات، بس ما بياخذ طلب إلا إذا ضل معه 0.5 بعد العمولة.

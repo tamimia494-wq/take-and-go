@@ -9,7 +9,7 @@ import { commissionUnits } from "./pricing";
 import { buildStatement, statementPeriod, sumStatements, type StatementEntry } from "./statement";
 import { CAPTAIN_RESERVED_BALANCE_FILS, fromFils, hasSufficientCaptainReplyBalance, normalizePhone, phoneFromChatId, toFils } from "./money";
 import { getDeletionStatus, importGroupCaptains, isExcludedPhone } from "./whatsapp";
-import { getLastGroupRemovalRun, previewGroupRemovals } from "./group-removal";
+import { getLastGroupRemovalRun, previewGroupRemovals, removeIneligibleGroupMembers } from "./group-removal";
 import { getSocketState, logoutWhatsAppSocket, startWhatsAppSocket } from "./whatsapp-socket";
 import QRCode from "qrcode";
 import { getBotPhone, getGroupMembers, getLastDeletionStatus } from "./whatsapp-client";
@@ -1087,7 +1087,8 @@ router.put("/admin/group-removal", requireAuth("admin"), async (req, res) => {
     create: { id: "default", groupRemovalEnabled: parsed.data.enabled },
     update: { groupRemovalEnabled: parsed.data.enabled }
   });
-  res.json({ enabled: updated.groupRemovalEnabled });
+  const run = updated.groupRemovalEnabled ? await removeIneligibleGroupMembers() : null;
+  res.json({ enabled: updated.groupRemovalEnabled, run });
 });
 
 router.put("/admin/settings", requireAuth("admin"), async (req, res) => {
