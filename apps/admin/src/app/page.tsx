@@ -131,6 +131,7 @@ export default function AdminHome() {
   const [diagnosePhone, setDiagnosePhone] = useState("");
   const [whatsAppLink, setWhatsAppLink] = useState<WhatsAppLink | null>(null);
   const [groupRemoval, setGroupRemoval] = useState<GroupRemoval | null>(null);
+  const [removalSearch, setRemovalSearch] = useState("");
   const [statementPeriod, setStatementPeriod] = useState(defaultPeriod);
   const [statements, setStatements] = useState<{ captains: CaptainWithStatement[]; totals: StatementTotals; from: string; to: string } | null>(null);
   const [statementView, setStatementView] = useState<"captains" | "profit">("captains");
@@ -734,7 +735,7 @@ export default function AdminHome() {
         {error && <p className="error" role="alert">{error}</p>}
         {notice && <p className="notice" role="status">{notice}</p>}
         <section className="metric-grid">
-          <Metric icon={<Users size={20} />} label="إجمالي الكباتن" value={overview?.captainCount ?? 0} color="blue" detail={`${overview?.activeCaptainCount ?? 0} حساب مفعل`} />
+          <Metric icon={<Users size={20} />} label="الكباتن المفعّلين" value={overview?.activeCaptainCount ?? 0} color="blue" detail="الحسابات المش مفعّلة مخفية" onClick={() => { window.location.href = "/captains"; }} />
           <Metric icon={<CircleDollarSign size={20} />} label="شحن رصيد للكابتن" value="إدارة الكابتن" color="violet" detail="الشحن وكشف الحساب ونوع الحساب" onClick={() => { window.location.href = "/captains"; }} />
           <Metric icon={<BadgeCheck size={20} />} label="حالة التكامل" value="واتساب مباشر" color="green" detail="ربط مجموعة واتساب" />
         </section>
@@ -819,14 +820,25 @@ export default function AdminHome() {
                 {groupRemoval.error ? <p>❌ تعذر قراءة الجروب: {groupRemoval.error}</p> : (
                   <>
                     <p>{groupRemoval.candidates?.length ? `${groupRemoval.candidates.length} عضو رح ينشال:` : "ما في حدا لازم ينشال حالياً."}</p>
-                    {groupRemoval.candidates?.length ? (
+                    {groupRemoval.candidates?.length ? (() => {
+                      // Inactive accounts are never listed by name unless searched for.
+                      const search = removalSearch.trim();
+                      const digits = search.replace(/\D/g, "").replace(/^0/, "");
+                      const shown = search
+                        ? groupRemoval.candidates.filter((candidate) => (candidate.fullName ?? "").includes(search) || (digits.length > 0 && candidate.phone.includes(digits)))
+                        : groupRemoval.candidates.filter((candidate) => candidate.reason !== "inactive");
+                      const inactiveCount = groupRemoval.candidates.filter((candidate) => candidate.reason === "inactive").length;
+                      return <>
+                      {inactiveCount > 0 && !search ? <p>منهم {inactiveCount} حساب مش مفعّل (مخفيين). ابحث برقم أو اسم لتشوف واحد منهم وتستثنيه.</p> : null}
+                      <input className="search" value={removalSearch} onChange={(event) => setRemovalSearch(event.target.value)} placeholder="بحث برقم أو اسم" />
                       <ul>
-                        {groupRemoval.candidates.slice(0, 50).map((candidate) => (
+                        {shown.slice(0, 50).map((candidate) => (
                           <li key={candidate.phone}><bdi>{candidate.fullName ?? candidate.phone}</bdi> (<bdi dir="ltr">{candidate.phone}</bdi>) — {candidate.reason === "inactive" ? "الحساب غير مفعل" : "الرصيد صفر"}{" "}
                             <button type="button" className="button ghost" disabled={busy} onClick={() => void exemptFromGroupRemoval(candidate.phone)}>استثناء</button></li>
                         ))}
                       </ul>
-                    ) : null}
+                      </>;
+                    })() : null}
                     {groupRemoval.withoutAccount ? <p>{groupRemoval.withoutAccount} عضو ما إلهم حساب (ما بنشالوا؛ اعمل مزامنة لأعضاء المجموعة).</p> : null}
                     {groupRemoval.unresolved ? <p>{groupRemoval.unresolved} عضو ما قدر النظام يعرف رقمهم.</p> : null}
                   </>
