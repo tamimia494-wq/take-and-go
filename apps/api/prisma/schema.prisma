@@ -108,6 +108,8 @@ model AppSettings {
   groupFloorFils           Int      @default(0)
   riderCommissionPerFiveFils Int     @default(750)
   orderCommissionPerFiveFils Int    @default(1000)
+  /// When on, members whose account is not active or whose balance is 0 are removed from the WhatsApp group.
+  groupRemovalEnabled      Boolean  @default(false)
   updatedAt                DateTime @updatedAt
 }
 

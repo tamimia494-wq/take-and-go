@@ -484,7 +484,7 @@ export default function CaptainHome() {
             <span>
               المتاح للسحب: {money(withdrawal.availableJod)} د.أ
               {withdrawal.pendingJod > 0 ? ` (عندك طلبات سحب قيد المراجعة بمبلغ ${money(withdrawal.pendingJod)} د.أ)` : ""}.
-              يُسحب المبلغ من رصيدك بعد اعتماد الإدارة.
+              يضل 0.5 د.أ محجوزة دائماً لأرضية الجروب ولا تُسحب. يُسحب المبلغ من رصيدك بعد اعتماد الإدارة.
             </span>
             {withdrawal.availableJod > 0 ? (
               <>

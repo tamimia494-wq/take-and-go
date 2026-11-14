@@ -1,6 +1,6 @@
 import { JobCategory, JobStatus, LedgerType, Prisma, ReplyStatus } from "@prisma/client";
 import { prisma } from "./db";
-import { MINIMUM_CAPTAIN_REPLY_BALANCE_FILS } from "./money";
+import { requiredCaptainReplyBalanceFils } from "./money";
 
 type ProcessResult =
   | {
@@ -101,7 +101,7 @@ export async function processJobReaction(replyMessageId: string): Promise<Proces
       where: {
         id: reply.captain.id,
         status: "ACTIVE",
-        balanceFils: { gte: Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, reply.job.commissionFils) }
+        balanceFils: { gte: requiredCaptainReplyBalanceFils(reply.job.commissionFils) }
       },
       data: { balanceFils: { decrement: reply.job.commissionFils } }
     });
@@ -259,7 +259,7 @@ async function chargeNextApprovedReply(
       where: {
         id: reply.captainId,
         status: "ACTIVE",
-        balanceFils: { gte: Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, job.commissionFils) }
+        balanceFils: { gte: requiredCaptainReplyBalanceFils(job.commissionFils) }
       },
       data: { balanceFils: { decrement: job.commissionFils } }
     });
@@ -274,7 +274,7 @@ async function chargeNextApprovedReply(
           likeRemovedAt: new Date()
         }
       });
-      skipped.push({ jobId, replyId: reply.id, reason: "حساب الكابتن غير مفعل أو رصيده أقل من عمولة الطلب." });
+      skipped.push({ jobId, replyId: reply.id, reason: "حساب الكابتن غير مفعل أو رصيده لا يغطي عمولة الطلب مع إبقاء 0.5 د.أ محجوزة." });
       continue;
     }
     const captain = await tx.captain.findUniqueOrThrow({ where: { id: reply.captainId } });

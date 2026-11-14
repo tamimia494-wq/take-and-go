@@ -7,8 +7,9 @@ import { repairCommissions, runCommissionAudit } from "./commission-repair";
 import { prisma } from "./db";
 import { commissionUnits } from "./pricing";
 import { buildStatement, statementPeriod, sumStatements, type StatementEntry } from "./statement";
-import { fromFils, MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, normalizePhone, phoneFromChatId, toFils } from "./money";
+import { CAPTAIN_RESERVED_BALANCE_FILS, fromFils, hasSufficientCaptainReplyBalance, normalizePhone, phoneFromChatId, toFils } from "./money";
 import { getDeletionStatus, importGroupCaptains, isExcludedPhone } from "./whatsapp";
+import { getLastGroupRemovalRun, previewGroupRemovals } from "./group-removal";
 import { getSocketState, logoutWhatsAppSocket, startWhatsAppSocket } from "./whatsapp-socket";
 import QRCode from "qrcode";
 import { getLastDeletionStatus, greenApiRequest } from "./green-api";
@@ -217,6 +218,7 @@ router.get("/admin/dashboard", requireAuth("admin"), async (_req, res) => {
       riderCommissionPerFiveJod: fromFils(settings.riderCommissionPerFiveFils),
       orderCommissionPerFiveJod: fromFils(settings.orderCommissionPerFiveFils)
     },
+    groupRemovalEnabled: settings.groupRemovalEnabled,
     latestActivity: latest.map((entry) => ({
       ...entry,
       amountJod: fromFils(entry.amountFils),
@@ -645,7 +647,7 @@ router.get("/admin/green-api/diagnose", requireAuth("admin"), async (req, res) =
         status: captain?.status ?? null,
         balanceJod: captain ? fromFils(captain.balanceFils) : null,
         shouldDelete: !isExcludedPhone(phone) && (!captain || captain.status !== "ACTIVE" ||
-          captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS)
+          !hasSufficientCaptainReplyBalance(captain.balanceFils, 0))
       };
     } catch (error) {
       result.phoneCheck = { error: error instanceof Error ? error.message : String(error) };
@@ -1077,6 +1079,34 @@ router.put("/admin/captains/:id/password", requireAuth("admin"), async (req, res
   res.json({ ok: true });
 });
 
+router.get("/admin/group-removal", requireAuth("admin"), async (_req, res) => {
+  const settings = await prisma.appSettings.findUnique({ where: { id: "default" }, select: { groupRemovalEnabled: true } });
+  const result: Record<string, unknown> = { enabled: settings?.groupRemovalEnabled ?? false, lastRun: getLastGroupRemovalRun() };
+  try {
+    const preview = await previewGroupRemovals();
+    result.candidates = preview.candidates.map((candidate) => ({ ...candidate, balanceJod: fromFils(candidate.balanceFils) }));
+    result.withoutAccount = preview.withoutAccount;
+    result.unresolved = preview.unresolved;
+  } catch (error) {
+    result.error = error instanceof Error ? error.message : String(error);
+  }
+  res.json(result);
+});
+
+router.put("/admin/group-removal", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "قيمة غير صالحة." });
+    return;
+  }
+  const updated = await prisma.appSettings.upsert({
+    where: { id: "default" },
+    create: { id: "default", groupRemovalEnabled: parsed.data.enabled },
+    update: { groupRemovalEnabled: parsed.data.enabled }
+  });
+  res.json({ enabled: updated.groupRemovalEnabled });
+});
+
 router.put("/admin/settings", requireAuth("admin"), async (req, res) => {
   const parsed = z.object({
     groupFloorJod: z.union([z.string(), z.number()]),
@@ -1262,14 +1292,18 @@ router.post("/admin/topups/:id/reject", requireAuth("admin"), async (req, res) =
 });
 
 // ==== طلبات سحب الرصيد ====
-/** What a captain can still ask to withdraw: their balance minus withdrawals already waiting for review. */
+/** What a captain can still ask to withdraw: their balance minus the 0.5 JOD reserve and withdrawals waiting for review. */
 async function availableToWithdrawFils(captainId: string): Promise<{ balanceFils: number; pendingFils: number; availableFils: number }> {
   const [captain, pending] = await Promise.all([
     prisma.captain.findUniqueOrThrow({ where: { id: captainId }, select: { balanceFils: true } }),
     prisma.withdrawalRequest.aggregate({ where: { captainId, status: "PENDING" }, _sum: { amountFils: true } })
   ]);
   const pendingFils = pending._sum.amountFils ?? 0;
-  return { balanceFils: captain.balanceFils, pendingFils, availableFils: Math.max(0, captain.balanceFils - pendingFils) };
+  return { balanceFils: captain.balanceFils, pendingFils, availableFils: withdrawableFils(captain.balanceFils, pendingFils) };
+}
+
+function withdrawableFils(balanceFils: number, pendingFils: number): number {
+  return Math.max(0, balanceFils - CAPTAIN_RESERVED_BALANCE_FILS - pendingFils);
 }
 
 router.get("/captain/withdrawal", requireAuth("captain"), async (req, res) => {
@@ -1301,11 +1335,11 @@ router.post("/captain/withdrawal", requireAuth("captain"), async (req, res) => {
         tx.captain.findUniqueOrThrow({ where: { id: req.user!.id }, select: { balanceFils: true } }),
         tx.withdrawalRequest.aggregate({ where: { captainId: req.user!.id, status: "PENDING" }, _sum: { amountFils: true } })
       ]);
-      const availableFils = Math.max(0, captain.balanceFils - (pending._sum.amountFils ?? 0));
+      const availableFils = withdrawableFils(captain.balanceFils, pending._sum.amountFils ?? 0);
       if (amountFils > availableFils) {
         throw new Error(availableFils > 0
-          ? `المبلغ أكبر من الرصيد المتاح للسحب (${fromFils(availableFils)} د.أ).`
-          : "لا يوجد رصيد متاح للسحب.");
+          ? `المبلغ أكبر من الرصيد المتاح للسحب (${fromFils(availableFils)} د.أ). يبقى ${fromFils(CAPTAIN_RESERVED_BALANCE_FILS)} د.أ محجوزة لأرضية الجروب.`
+          : `لا يوجد رصيد متاح للسحب؛ آخر ${fromFils(CAPTAIN_RESERVED_BALANCE_FILS)} د.أ محجوزة لأرضية الجروب.`);
       }
       return tx.withdrawalRequest.create({ data: { captainId: req.user!.id, amountFils } });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
@@ -1356,12 +1390,14 @@ router.post("/admin/withdrawals/:id/approve", requireAuth("admin"), async (req, 
         data: { status: "APPROVED", reviewedAt: new Date() }
       });
       if (claimed.count !== 1) throw new Error("تمت معالجة الطلب مسبقاً.");
-      // The balance never goes below zero; the throw also undoes the approval above.
+      // The 0.5 JOD reserve always stays in the balance; the throw also undoes the approval above.
       const debited = await tx.captain.updateMany({
-        where: { id: request.captainId, balanceFils: { gte: request.amountFils } },
+        where: { id: request.captainId, balanceFils: { gte: request.amountFils + CAPTAIN_RESERVED_BALANCE_FILS } },
         data: { balanceFils: { decrement: request.amountFils } }
       });
-      if (debited.count !== 1) throw new Error("رصيد الكابتن الحالي أقل من المبلغ المطلوب سحبه.");
+      if (debited.count !== 1) {
+        throw new Error(`رصيد الكابتن الحالي لا يكفي للسحب مع إبقاء ${fromFils(CAPTAIN_RESERVED_BALANCE_FILS)} د.أ محجوزة لأرضية الجروب.`);
+      }
       const updated = await tx.captain.findUniqueOrThrow({ where: { id: request.captainId } });
       await tx.ledgerEntry.create({
         data: {

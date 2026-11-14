@@ -11,10 +11,20 @@ export function fromFils(fils: number): number {
   return fils / 1000;
 }
 
-export const MINIMUM_CAPTAIN_REPLY_BALANCE_FILS = 750;
+/**
+ * 0.5 JOD every captain keeps and can never spend, so the weekly group floor can always be taken. A captain can
+ * take an order only if their balance after its commission is still at least this much, and can withdraw only
+ * what is above it. Posting orders (producing) still works with just this reserve.
+ */
+export const CAPTAIN_RESERVED_BALANCE_FILS = 500;
+
+/** The balance a captain needs to take an order with this commission: the commission plus the reserve. */
+export function requiredCaptainReplyBalanceFils(commissionFils: number): number {
+  return CAPTAIN_RESERVED_BALANCE_FILS + Math.max(1, commissionFils);
+}
 
 export function hasSufficientCaptainReplyBalance(balanceFils: number, commissionFils: number): boolean {
-  return balanceFils >= Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, commissionFils);
+  return balanceFils >= requiredCaptainReplyBalanceFils(commissionFils);
 }
 
 export function normalizeDigits(value: string): string {

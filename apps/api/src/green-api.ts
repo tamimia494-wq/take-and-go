@@ -1,6 +1,6 @@
 import { config } from "./config";
 import { phoneFromChatId } from "./money";
-import { deleteViaSocket, isSocketConnected, sendPrivateViaSocket, sendViaSocket } from "./whatsapp-socket";
+import { deleteViaSocket, isSocketConnected, removeParticipantViaSocket, sendPrivateViaSocket, sendViaSocket } from "./whatsapp-socket";
 
 export class GreenApiRequestError extends Error {
   constructor(
@@ -128,6 +128,39 @@ export async function getGroupParticipants(): Promise<string[]> {
   return (data.participants ?? [])
     .map((participant) => participant.phoneNumber?.trim() || participant.id || participant.participantId || "")
     .filter(Boolean);
+}
+
+export type GroupMember = { phone: string | null; isAdmin: boolean };
+
+/** Every group member with their phone number when WhatsApp reports one, and whether they are a group admin. */
+export async function getGroupMembers(): Promise<GroupMember[]> {
+  const { groupId } = requireGreenApiConfig();
+  const data = await greenApiRequest<{
+    participants?: Array<{ id?: string; participantId?: string; phoneNumber?: string; isAdmin?: boolean; isSuperAdmin?: boolean }>;
+  }>("getGroupData", { groupId });
+  return (data.participants ?? []).map((participant) => ({
+    phone: [participant.phoneNumber, participant.id, participant.participantId]
+      .map((id) => id ? phoneFromChatId(id) : null)
+      .find((candidate): candidate is string => candidate !== null) ?? null,
+    isAdmin: Boolean(participant.isAdmin || participant.isSuperAdmin)
+  }));
+}
+
+/** Removes a member from the group, through the direct link when it is connected and Green API otherwise. */
+export async function removeGroupMember(phone: string): Promise<void> {
+  if (isSocketConnected()) {
+    try {
+      if (await removeParticipantViaSocket(phone)) return;
+    } catch (error) {
+      console.warn(`Direct link could not remove ${phone} from the group, trying Green API:`, error);
+    }
+  }
+  const { groupId } = requireGreenApiConfig();
+  const result = await greenApiRequest<{ removeParticipant?: boolean }>("removeGroupParticipant", {
+    groupId,
+    participantChatId: `${phone}@c.us`
+  });
+  if (result.removeParticipant !== true) throw new Error("WhatsApp did not confirm the removal; is the bot a group admin?");
 }
 
 export async function resolveGroupSenderPhone(senderId: string): Promise<string | null> {

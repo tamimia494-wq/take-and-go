@@ -6,6 +6,7 @@ import { config } from "./config";
 import { prisma } from "./db";
 import { chargeWeeklyFloor, chargeWeeklyFloorIfDue } from "./accounting";
 import { repairCommissions } from "./commission-repair";
+import { removeIneligibleGroupMembers } from "./group-removal";
 import { hasStoredSession, onSocketGroupMessage, startWhatsAppSocket } from "./whatsapp-socket";
 import { router } from "./routes";
 import { enqueueIncomingWebhook, receiveGreenApiWebhook, replayRecentMessages, retryPendingGreenApiWebhooks, sweepUnauthorizedMessages } from "./whatsapp";
@@ -74,6 +75,25 @@ cron.schedule("* * * * *", () => {
     })
     .finally(() => {
       sweepRunning = false;
+    });
+});
+
+// Removes members whose account is not active or whose balance is 0 (only while the admin has it turned on).
+let groupRemovalRunning = false;
+cron.schedule("*/5 * * * *", () => {
+  if (groupRemovalRunning) return;
+  groupRemovalRunning = true;
+  void removeIneligibleGroupMembers()
+    .then((run) => {
+      if (run?.removed.length) console.info(`Group removal removed ${run.removed.length} members.`);
+      if (run?.failed.length) console.warn("Group removal could not remove:", run.failed);
+      if (run?.error) console.warn("Group removal failed:", run.error);
+    })
+    .catch((error: unknown) => {
+      console.error("Group removal failed:", error);
+    })
+    .finally(() => {
+      groupRemovalRunning = false;
     });
 });
 

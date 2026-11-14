@@ -62,7 +62,15 @@ function auditLabel(entry: PhoneLookup["auditLog"][number]): string {
   if (entry.details?.passwordChanged) changes.push("تغيير كلمة المرور");
   return `تعديل الحساب: ${changes.join("، ") || "تغيير بيانات"}`;
 }
-type Overview = { captainCount: number; activeCaptainCount: number; totalBalanceJod: number; settings: Settings; latestActivity: Activity[] };
+type Overview = { captainCount: number; activeCaptainCount: number; totalBalanceJod: number; settings: Settings; groupRemovalEnabled: boolean; latestActivity: Activity[] };
+type GroupRemoval = {
+  enabled: boolean;
+  candidates?: Array<{ phone: string; fullName: string | null; reason: "inactive" | "zero_balance"; balanceJod: number }>;
+  withoutAccount?: number;
+  unresolved?: number;
+  error?: string;
+  lastRun: { at: string; removed: string[]; failed: Array<{ phone: string; error: string }>; error: string | null } | null;
+};
 type CommissionAudit = {
   checkedJobs: number;
   consistentJobs: number;
@@ -127,6 +135,7 @@ export default function AdminHome() {
   const [commissionAudit, setCommissionAudit] = useState<CommissionAudit | null>(null);
   const [diagnosePhone, setDiagnosePhone] = useState("");
   const [whatsAppLink, setWhatsAppLink] = useState<WhatsAppLink | null>(null);
+  const [groupRemoval, setGroupRemoval] = useState<GroupRemoval | null>(null);
   const [statementPeriod, setStatementPeriod] = useState(defaultPeriod);
   const [statements, setStatements] = useState<{ captains: CaptainWithStatement[]; totals: StatementTotals; from: string; to: string } | null>(null);
   const [statementView, setStatementView] = useState<"captains" | "profit">("captains");
@@ -393,6 +402,35 @@ export default function AdminHome() {
       setNotice(lines.join(" | ") || JSON.stringify(result));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر تشخيص الاتصال.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function loadGroupRemoval() {
+    setBusy(true);
+    setError("");
+    try {
+      setGroupRemoval(await api<GroupRemoval>("/admin/group-removal", token));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر قراءة أعضاء الجروب.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setGroupRemovalEnabled(enabled: boolean) {
+    if (enabled && !window.confirm("تشغيل الإزالة التلقائية؟ كل عضو حسابه غير مفعل أو رصيده صفر رح ينشال من الجروب (10 أعضاء كل 5 دقائق).")) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await api("/admin/group-removal", token, { method: "PUT", body: JSON.stringify({ enabled }) });
+      setNotice(enabled ? "تم تشغيل الإزالة التلقائية من الجروب." : "تم إيقاف الإزالة التلقائية من الجروب.");
+      await refresh(token);
+      if (groupRemoval) setGroupRemoval({ ...groupRemoval, enabled });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر حفظ الإعداد.");
     } finally {
       setBusy(false);
     }
@@ -876,6 +914,40 @@ export default function AdminHome() {
                 <p className="hint">غير مربوط حالياً، ويعمل النظام عبر Green API.{whatsAppLink?.error ? ` آخر خطأ: ${whatsAppLink.error}` : ""}</p>
                 <button className="button primary full" onClick={() => void startWhatsAppLink()}>ربط رقم البوت (عرض QR)</button>
               </>
+            )}
+          </article>
+          <article className="panel">
+            <div className="panel-heading"><span className="panel-icon"><Users size={19} /></span><div><h2>إزالة من الجروب</h2><p>تلقائياً كل 5 دقائق: الحساب غير المفعل أو الرصيد صفر</p></div></div>
+            <p className="hint">
+              {overview?.groupRemovalEnabled ? "✅ الإزالة التلقائية شغالة." : "⏸️ الإزالة التلقائية موقفة."} أرقام الإدارة والبوت ومشرفي الجروب والأرقام بدون حساب ما بتنشال.
+              يضل 0.5 د.أ محجوزة عند كل كابتن لأرضية الجروب، ومعها بيضل بالجروب ويقدر ينزّل طلبات، بس ما بياخذ طلب إلا إذا ضل معه 0.5 بعد العمولة.
+            </p>
+            <button className="button ghost full" disabled={busy} onClick={() => void loadGroupRemoval()}><Users size={17} /> عرض مين رح ينشال</button>
+            <button className={`button full ${overview?.groupRemovalEnabled ? "ghost" : "primary"}`} disabled={busy} onClick={() => void setGroupRemovalEnabled(!overview?.groupRemovalEnabled)}>
+              {overview?.groupRemovalEnabled ? "إيقاف الإزالة التلقائية" : "تشغيل الإزالة التلقائية"}
+            </button>
+            {groupRemoval && (
+              <div className="hint">
+                {groupRemoval.error ? <p>❌ تعذر قراءة الجروب: {groupRemoval.error}</p> : (
+                  <>
+                    <p>{groupRemoval.candidates?.length ? `${groupRemoval.candidates.length} عضو رح ينشال:` : "ما في حدا لازم ينشال حالياً."}</p>
+                    {groupRemoval.candidates?.length ? (
+                      <ul>
+                        {groupRemoval.candidates.slice(0, 50).map((candidate) => (
+                          <li key={candidate.phone}><bdi>{candidate.fullName ?? candidate.phone}</bdi> (<bdi dir="ltr">{candidate.phone}</bdi>) — {candidate.reason === "inactive" ? "الحساب غير مفعل" : "الرصيد صفر"}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {groupRemoval.withoutAccount ? <p>{groupRemoval.withoutAccount} عضو ما إلهم حساب (ما بنشالوا؛ اعمل مزامنة لأعضاء المجموعة).</p> : null}
+                    {groupRemoval.unresolved ? <p>{groupRemoval.unresolved} عضو ما قدر النظام يعرف رقمهم.</p> : null}
+                  </>
+                )}
+                {groupRemoval.lastRun && (
+                  <p>آخر تشغيل {new Date(groupRemoval.lastRun.at).toLocaleTimeString("ar-JO")}: انشال {groupRemoval.lastRun.removed.length}
+                    {groupRemoval.lastRun.failed.length ? `، وفشل ${groupRemoval.lastRun.failed.length} (${groupRemoval.lastRun.failed[0]!.error})` : ""}
+                    {groupRemoval.lastRun.error ? ` — ${groupRemoval.lastRun.error}` : ""}.</p>
+                )}
+              </div>
             )}
           </article>
           <article className="panel import-panel">

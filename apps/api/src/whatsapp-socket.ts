@@ -81,6 +81,13 @@ export async function deleteViaSocket(messageId: string): Promise<boolean> {
   return true;
 }
 
+/** Removes a member from the group. Returns false when WhatsApp did not confirm the removal. */
+export async function removeParticipantViaSocket(phone: string): Promise<boolean> {
+  if (!socket || !config.greenApiGroupId) return false;
+  const results = await socket.groupParticipantsUpdate(config.greenApiGroupId, [`${phone}@s.whatsapp.net`], "remove");
+  return results.some((result) => result.status === "200");
+}
+
 export async function sendPrivateViaSocket(phone: string, message: string): Promise<void> {
   if (!socket) throw new Error("WhatsApp socket is not connected.");
   await socket.sendMessage(`${phone}@s.whatsapp.net`, { text: message });

@@ -5,10 +5,11 @@ import { config } from "./config";
 import { prisma } from "./db";
 import { deleteGroupMessage, fetchGroupHistory, fetchGroupMessage, fetchRecentIncomingMessages, getGroupMessageSenderPhone, getInstancePhone, getGroupParticipants, GreenApiRequestError, greenApiRequest, resolveGroupSenderPhone, sendPrivateMessage } from "./green-api";
 import {
+  CAPTAIN_RESERVED_BALANCE_FILS,
   hasSufficientCaptainReplyBalance,
-  MINIMUM_CAPTAIN_REPLY_BALANCE_FILS,
   normalizePhone,
-  phoneFromChatId
+  phoneFromChatId,
+  requiredCaptainReplyBalanceFils
 } from "./money";
 import { rememberMessageParticipant } from "./whatsapp-socket";
 import { cancelChargedJob, processJobReaction, removeJobLike } from "./accounting";
@@ -528,7 +529,7 @@ export async function backfillReplyApprovalsFromHistory(count = 300): Promise<{
 async function wasBelowMinimumBalance(
   captain: { id: string; balanceFils: number },
   sentAt: Date,
-  requiredFils = MINIMUM_CAPTAIN_REPLY_BALANCE_FILS
+  requiredFils = requiredCaptainReplyBalanceFils(0)
 ): Promise<boolean> {
   if (captain.balanceFils >= requiredFils) return false;
   const entryBefore = await prisma.ledgerEntry.findFirst({
@@ -600,7 +601,7 @@ async function sweepUnauthorizedMessagesOnce(count: number): Promise<{ deleted: 
     if (!quotedJob && !(quotedId && isConfirmation(journalText(entry) ?? ""))) continue;
     const storedReply = await prisma.whatsAppReply.findUnique({ where: { messageId }, select: { status: true } });
     if (storedReply?.status === "CHARGED") continue;
-    const requiredFils = Math.max(MINIMUM_CAPTAIN_REPLY_BALANCE_FILS, quotedJob?.commissionFils ?? 0);
+    const requiredFils = requiredCaptainReplyBalanceFils(quotedJob?.commissionFils ?? 0);
     const unauthorized = !captain || captain.status !== "ACTIVE" ||
       await wasBelowMinimumBalance(captain, new Date(timestamp * 1000), requiredFils);
     if (!unauthorized) continue;
@@ -685,9 +686,9 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   // Anyone may post an order or chat; only a reply to an order needs an active account and enough balance.
   if (!text && !quotedJob) return;
   if (isConfirmationReply && !quotedJob) {
-    // The order's commission is unknown, so only the minimum balance can be checked; it must not wait for the order.
+    // The order's commission is unknown, so only the reserve can be checked; it must not wait for the order.
     const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
-    if (!excludedAdmin && (!captain || captain.status !== "ACTIVE" || captain.balanceFils < MINIMUM_CAPTAIN_REPLY_BALANCE_FILS)) {
+    if (!excludedAdmin && (!captain || captain.status !== "ACTIVE" || !hasSufficientCaptainReplyBalance(captain.balanceFils, 0))) {
       console.warn(`Deleting confirmation ${messageId}: sender cannot take orders, balance=${captain?.balanceFils ?? "unknown"} fils.`);
       await deleteRejectedReplyMessage(messageId);
       await notifyDeletion(
@@ -695,7 +696,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
         senderPhone,
         !captain || captain.status !== "ACTIVE"
           ? "رقمك غير مسجل في Take & Go أو حسابك غير مفعل. تواصل مع الإدارة لتفعيل حسابك."
-          : `ردّك انحذف لأن رصيدك ${formatJod(captain.balanceFils)} د.أ لا يغطي عمولة الطلب. اشحن رصيدك لتتمكن من أخذ الطلبات.`
+          : `ردّك انحذف لأن رصيدك ${formatJod(captain.balanceFils)} د.أ لا يغطي عمولة الطلب، و${formatJod(CAPTAIN_RESERVED_BALANCE_FILS)} د.أ منه محجوزة لأرضية الجروب. اشحن رصيدك لتتمكن من أخذ الطلبات.`
       );
       return;
     }
@@ -732,7 +733,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
         senderPhone,
         rejection === "unregistered"
           ? "رقمك غير مسجل في Take & Go أو حسابك غير مفعل. تواصل مع الإدارة لتفعيل حسابك."
-          : `ردّك على الطلب انحذف لأن رصيدك ${formatJod(captain!.balanceFils)} د.أ أقل من عمولة الطلب ${formatJod(job.commissionFils)} د.أ. اشحن رصيدك لتتمكن من أخذ الطلبات.`
+          : `ردّك على الطلب انحذف لأن رصيدك ${formatJod(captain!.balanceFils)} د.أ لا يكفي: عمولة الطلب ${formatJod(job.commissionFils)} د.أ ولازم يضل معك ${formatJod(CAPTAIN_RESERVED_BALANCE_FILS)} د.أ محجوزة لأرضية الجروب، يعني بدك ${formatJod(requiredCaptainReplyBalanceFils(job.commissionFils))} د.أ على الأقل. اشحن رصيدك لتتمكن من أخذ الطلبات.`
       );
     }
     return;
