@@ -32,7 +32,7 @@ export async function previewGroupRemovals(): Promise<{ candidates: RemovalCandi
   const [captains, protectedSet] = await Promise.all([
     prisma.captain.findMany({
       where: { phone: { in: phones } },
-      select: { phone: true, fullName: true, status: true, balanceFils: true }
+      select: { phone: true, fullName: true, status: true, balanceFils: true, groupRemovalExempt: true }
     }),
     protectedPhones()
   ]);
@@ -90,10 +90,11 @@ async function runRemoval(): Promise<GroupRemovalRun | null> {
     return run;
   }
   try {
+    await exemptManualReAdds();
     const { candidates } = await previewGroupRemovals();
     // A top-up or activation may have landed while the group was being read.
     const current = await prisma.captain.findMany({
-      where: { phone: { in: candidates.map((candidate) => candidate.phone) } },
+      where: { phone: { in: candidates.map((candidate) => candidate.phone) }, groupRemovalExempt: false },
       select: { phone: true, status: true, balanceFils: true }
     });
     const reasons = new Map<string, RemovalReason>();
@@ -117,6 +118,32 @@ async function runRemoval(): Promise<GroupRemovalRun | null> {
   }
   lastRun = run;
   return run;
+}
+
+/**
+ * Someone the system removed who is back in the group while still not eligible was added back by hand, so the admin
+ * wants them there: they are exempted for good instead of being removed again a minute later.
+ */
+async function exemptManualReAdds(): Promise<void> {
+  const removed = await prisma.captain.findMany({
+    where: { removedFromGroupAt: { not: null } },
+    select: { phone: true, status: true, balanceFils: true }
+  });
+  if (!removed.length) return;
+  const members = new Set((await getGroupMembers(true)).map((member) => member.phone).filter(Boolean));
+  const readded = removed.filter((captain) => members.has(captain.phone) && removalReason(captain)).map((captain) => captain.phone);
+  if (!readded.length) return;
+  await prisma.captain.updateMany({
+    where: { phone: { in: readded } },
+    data: { removedFromGroupAt: null, groupRemovalExempt: true }
+  });
+  console.info(`Group removal: ${readded.length} members were added back by hand and are now exempt.`);
+}
+
+/** Exempts a captain from removal, or lifts the exemption. */
+export async function setGroupRemovalExempt(phone: string, exempt: boolean): Promise<boolean> {
+  const updated = await prisma.captain.updateMany({ where: { phone }, data: { groupRemovalExempt: exempt } });
+  return updated.count === 1;
 }
 
 /** A member WhatsApp refused to add is tried again after this long, not every minute. */

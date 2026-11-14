@@ -10,6 +10,12 @@ function required(name: string): string {
   return value;
 }
 
+/**
+ * The group owner's number: never removed from the group, never has messages deleted and is never balance-checked,
+ * whatever the environment says.
+ */
+const GROUP_OWNER_PHONE = "0797907580";
+
 // GREEN_API_* names are still read so existing deployments keep working without renaming their variables.
 const whatsappGroupId = process.env.WHATSAPP_GROUP_ID || process.env.GREEN_API_GROUP_ID;
 
@@ -20,8 +26,8 @@ export const config = {
   whatsappGroupId: whatsappGroupId && /^\d+$/.test(whatsappGroupId)
     ? `${whatsappGroupId}@g.us`
     : whatsappGroupId,
-  excludedAdminPhones: (process.env.WHATSAPP_EXCLUDED_PHONES || process.env.GREEN_API_EXCLUDED_PHONES || "")
-    .split(/[;,\s]+/).filter(Boolean),
+  excludedAdminPhones: [GROUP_OWNER_PHONE, ...(process.env.WHATSAPP_EXCLUDED_PHONES || process.env.GREEN_API_EXCLUDED_PHONES || "")
+    .split(/[;,\s]+/).filter(Boolean)],
   captainAppUrl: process.env.CAPTAIN_APP_URL ?? "http://localhost:3001",
   adminAppUrl: process.env.ADMIN_APP_URL ?? "http://localhost:3002",
   customerAppUrl: process.env.CUSTOMER_APP_URL ?? "http://localhost:3000",

@@ -9,7 +9,7 @@ import { commissionUnits } from "./pricing";
 import { buildStatement, statementPeriod, sumStatements, type StatementEntry } from "./statement";
 import { CAPTAIN_RESERVED_BALANCE_FILS, fromFils, hasSufficientCaptainReplyBalance, normalizePhone, phoneFromChatId, toFils } from "./money";
 import { getDeletionStatus, importGroupCaptains, isExcludedPhone } from "./whatsapp";
-import { getLastGroupRemovalRun, previewGroupRemovals, startGroupSync, syncGroupMembership } from "./group-removal";
+import { getLastGroupRemovalRun, previewGroupRemovals, setGroupRemovalExempt, startGroupSync, syncGroupMembership } from "./group-removal";
 import { getSocketState, logoutWhatsAppSocket, startWhatsAppSocket } from "./whatsapp-socket";
 import QRCode from "qrcode";
 import { getBotPhone, getGroupMembers, getLastDeletionStatus } from "./whatsapp-client";
@@ -1077,6 +1077,25 @@ router.get("/admin/group-removal", requireAuth("admin"), async (_req, res) => {
     result.error = error instanceof Error ? error.message : String(error);
   }
   res.json(result);
+});
+
+router.put("/admin/group-removal/exempt", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({ phone: z.string(), exempt: z.boolean() }).safeParse(req.body);
+  let phone: string | null = null;
+  try {
+    phone = parsed.success ? normalizePhone(parsed.data.phone) : null;
+  } catch {
+    phone = null;
+  }
+  if (!parsed.success || !phone) {
+    res.status(400).json({ error: "رقم غير صالح." });
+    return;
+  }
+  if (!(await setGroupRemovalExempt(phone, parsed.data.exempt))) {
+    res.status(404).json({ error: "ما في حساب بهذا الرقم." });
+    return;
+  }
+  res.json({ phone, exempt: parsed.data.exempt });
 });
 
 router.put("/admin/group-removal", requireAuth("admin"), async (req, res) => {

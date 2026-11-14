@@ -103,10 +103,15 @@ export async function getGroupParticipantsViaSocket(fresh = false): Promise<Sock
   if (!fresh && participantsCache && Date.now() - participantsCache.at < PARTICIPANTS_CACHE_MS) return participantsCache.participants;
   const { sock, groupId } = connectedSocket();
   const metadata = await sock.groupMetadata(groupId);
-  const participants = metadata.participants.map((participant) => ({
-    ids: [participant.jid, participant.id, participant.lid].filter((id): id is string => Boolean(id)),
-    isAdmin: Boolean(participant.admin || participant.isAdmin || participant.isSuperAdmin)
-  }));
+  // The group creator counts as an admin even if WhatsApp no longer marks them as one.
+  const ownerIds = new Set([metadata.owner, metadata.ownerJid].filter((id): id is string => Boolean(id)));
+  const participants = metadata.participants.map((participant) => {
+    const ids = [participant.jid, participant.id, participant.lid].filter((id): id is string => Boolean(id));
+    return {
+      ids,
+      isAdmin: Boolean(participant.admin || participant.isAdmin || participant.isSuperAdmin || ids.some((id) => ownerIds.has(id)))
+    };
+  });
   participantsCache = { at: Date.now(), participants };
   return participants;
 }

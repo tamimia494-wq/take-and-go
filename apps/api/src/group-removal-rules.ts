@@ -1,11 +1,11 @@
 type GroupMember = { phone: string | null; isAdmin: boolean };
 
 // Who leaves the WhatsApp group: members whose account is not active (not activated yet or suspended) or whose
-// balance reached 0. Group admins, protected numbers and numbers without an account are never removed.
+// balance reached 0. Group admins, protected numbers, exempted captains and numbers without an account are never removed.
 
 export type RemovalReason = "inactive" | "zero_balance";
 export type RemovalCandidate = { phone: string; fullName: string | null; reason: RemovalReason; balanceFils: number };
-type CaptainState = { phone: string; fullName: string | null; status: string; balanceFils: number };
+type CaptainState = { phone: string; fullName: string | null; status: string; balanceFils: number; groupRemovalExempt?: boolean };
 
 export function removalReason(captain: { status: string; balanceFils: number }): RemovalReason | null {
   if (captain.status !== "ACTIVE") return "inactive";
@@ -30,6 +30,7 @@ export function selectMembersToRemove(
       withoutAccount += 1;
       continue;
     }
+    if (captain.groupRemovalExempt) continue;
     const reason = removalReason(captain);
     if (reason) candidates.push({ phone: captain.phone, fullName: captain.fullName, reason, balanceFils: captain.balanceFils });
   }

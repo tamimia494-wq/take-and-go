@@ -19,13 +19,15 @@ test("never removes admins, protected numbers, unknown numbers or members withou
       { phone: "962790000003", isAdmin: false },
       { phone: "962790000004", isAdmin: false },
       { phone: "962790000005", isAdmin: false },
+      { phone: "962790000006", isAdmin: false },
       { phone: null, isAdmin: false }
     ],
     [
       { phone: "962790000001", fullName: "أ", status: "ACTIVE", balanceFils: 0 },
       { phone: "962790000002", fullName: "ب", status: "SUSPENDED", balanceFils: 0 },
       { phone: "962790000003", fullName: "ج", status: "PENDING_PROFILE", balanceFils: 0 },
-      { phone: "962790000005", fullName: "د", status: "ACTIVE", balanceFils: 750 }
+      { phone: "962790000005", fullName: "د", status: "ACTIVE", balanceFils: 750 },
+      { phone: "962790000006", fullName: "ه", status: "PENDING_PROFILE", balanceFils: 0, groupRemovalExempt: true }
     ],
     new Set(["962790000003"])
   );

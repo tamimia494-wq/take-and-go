@@ -77,6 +77,8 @@ model Captain {
   balanceFils    Int            @default(0)
   /// Set when the system removed the captain from the WhatsApp group; they are added back once eligible again.
   removedFromGroupAt DateTime?
+  /// Never removed from the WhatsApp group: set by the admin, or automatically when someone adds them back by hand.
+  groupRemovalExempt Boolean   @default(false)
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   ledgerEntries  LedgerEntry[]

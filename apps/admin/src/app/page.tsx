@@ -404,6 +404,20 @@ export default function AdminHome() {
     }
   }
 
+  async function exemptFromGroupRemoval(phone: string) {
+    setBusy(true);
+    setError("");
+    try {
+      await api("/admin/group-removal/exempt", token, { method: "PUT", body: JSON.stringify({ phone, exempt: true }) });
+      setNotice(`تم استثناء ${phone} من الإزالة، وما رح ينشال من الجروب أبداً.`);
+      if (groupRemoval) setGroupRemoval({ ...groupRemoval, candidates: groupRemoval.candidates?.filter((candidate) => candidate.phone !== phone) });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر الاستثناء.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function setGroupRemovalEnabled(enabled: boolean) {
     if (enabled && !window.confirm("تشغيل الإزالة؟ كل عضو حسابه غير مفعل أو رصيده صفر رح ينشال من الجروب هسا مرة وحدة، وبعدها أي حدا بصير هيك بنشال خلال دقيقة.")) return;
     setBusy(true);
@@ -908,7 +922,7 @@ export default function AdminHome() {
             <div className="panel-heading"><span className="panel-icon"><Users size={19} /></span><div><h2>إزالة من الجروب</h2><p>الحساب غير المفعل أو الرصيد صفر: الكل مرة وحدة، وبعدها خلال دقيقة</p></div></div>
             <p className="hint">
               {overview?.groupRemovalEnabled ? "✅ الإزالة التلقائية شغالة." : "⏸️ الإزالة التلقائية موقفة."} أرقام الإدارة والبوت ومشرفي الجروب والأرقام بدون حساب ما بتنشال.
-              اللي بنشال بيرجع للجروب تلقائياً أول ما يشحن ويكون حسابه مفعّل. يضل 0.5 د.أ محجوزة عند كل كابتن لأرضية الجروب، ومعها بيضل بالجروب ويقدر ينزّل طلبات، بس ما بياخذ طلب إلا إذا ضل معه 0.5 بعد العمولة.
+              اللي بنشال بيرجع للجروب تلقائياً أول ما يشحن ويكون حسابه مفعّل، وإذا رجّعت حدا بإيدك النظام بيستثنيه وما بيشيله مرة ثانية. يضل 0.5 د.أ محجوزة عند كل كابتن لأرضية الجروب، ومعها بيضل بالجروب ويقدر ينزّل طلبات، بس ما بياخذ طلب إلا إذا ضل معه 0.5 بعد العمولة.
             </p>
             <button className="button ghost full" disabled={busy} onClick={() => void loadGroupRemoval()}><Users size={17} /> عرض مين رح ينشال</button>
             <button className={`button full ${overview?.groupRemovalEnabled ? "ghost" : "primary"}`} disabled={busy} onClick={() => void setGroupRemovalEnabled(!overview?.groupRemovalEnabled)}>
@@ -922,7 +936,8 @@ export default function AdminHome() {
                     {groupRemoval.candidates?.length ? (
                       <ul>
                         {groupRemoval.candidates.slice(0, 50).map((candidate) => (
-                          <li key={candidate.phone}><bdi>{candidate.fullName ?? candidate.phone}</bdi> (<bdi dir="ltr">{candidate.phone}</bdi>) — {candidate.reason === "inactive" ? "الحساب غير مفعل" : "الرصيد صفر"}</li>
+                          <li key={candidate.phone}><bdi>{candidate.fullName ?? candidate.phone}</bdi> (<bdi dir="ltr">{candidate.phone}</bdi>) — {candidate.reason === "inactive" ? "الحساب غير مفعل" : "الرصيد صفر"}{" "}
+                            <button type="button" className="button ghost" disabled={busy} onClick={() => void exemptFromGroupRemoval(candidate.phone)}>استثناء</button></li>
                         ))}
                       </ul>
                     ) : null}
