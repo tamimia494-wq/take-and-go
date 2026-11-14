@@ -144,7 +144,6 @@ export default function AdminHome() {
   const [phoneLookup, setPhoneLookup] = useState<PhoneLookup | null>(null);
   const [searchedStatementPhone, setSearchedStatementPhone] = useState("");
   const statementsRef = useRef<HTMLDivElement>(null);
-  const transferRequest = useRef<{ fingerprint: string; requestId: string } | null>(null);
 
   const refresh = useCallback(async (authToken: string) => {
     const [home, list, methods, topUpList, requestList, withdrawalList] = await Promise.all([
@@ -566,50 +565,6 @@ export default function AdminHome() {
     }
   }
 
-  async function transferCommission(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const transferDetails = {
-      consumerPhone: String(form.get("consumerPhone") ?? ""),
-      productPhone: String(form.get("productPhone") ?? ""),
-      amount: String(form.get("amount") ?? "")
-    };
-    const fingerprint = JSON.stringify(transferDetails);
-    if (transferRequest.current?.fingerprint !== fingerprint) {
-      transferRequest.current = { fingerprint, requestId: crypto.randomUUID() };
-    }
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
-      const result = await api<{
-        amountJod: number;
-        consumer: { phone: string; balanceJod: number };
-        product: { phone: string; balanceJod: number };
-      }>("/admin/commission-transfer", token, {
-        method: "POST",
-        body: JSON.stringify({
-          consumerPhone: form.get("consumerPhone"),
-          productPhone: form.get("productPhone"),
-          amount: form.get("amount"),
-          requestId: transferRequest.current.requestId
-        })
-      });
-      setNotice(
-        `تم تحويل عمولة ${money(result.amountJod)} د.أ من المستهلك ${result.consumer.phone} إلى المنتج ${result.product.phone}. ` +
-        `الرصيد الجديد: المستهلك ${money(result.consumer.balanceJod)} د.أ، المنتج ${money(result.product.balanceJod)} د.أ.`
-      );
-      transferRequest.current = null;
-      formElement.reset();
-      await refresh(token);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر تحويل العمولة.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function runCommissionAudit() {
     setBusy(true);
     setError("");
@@ -852,6 +807,8 @@ export default function AdminHome() {
         <div className="heading">
           <div><p className="eyebrow">مساحة العمل</p><h1>مرحباً بك في لوحة الإدارة</h1><p className="muted">إدارة الكباتن والأرصدة والرسوم من مكان واحد.</p></div>
           <div className="heading-actions">
+            <a className="button primary" href="/captains"><Wallet size={16} /> إدارة الكابتن</a>
+            <a className="button ghost" href="/transfer"><CircleDollarSign size={16} /> تحويل عمولة</a>
             <a className="button ghost" href="/booking">إدارة الحجوزات</a>
             <button className="button ghost refresh" onClick={() => void refresh(token)}><RefreshCw size={16} /> تحديث البيانات</button>
             <button className="button ghost" onClick={() => setShowPassword((value) => !value)}><KeyRound size={16} /> تغيير كلمة المرور</button>
@@ -989,13 +946,8 @@ export default function AdminHome() {
         <section className="admin-grid commission-tools">
           <article className="panel">
             <div className="panel-heading"><span className="panel-icon"><CircleDollarSign size={19} /></span><div><h2>تحويل عمولة من مستهلك إلى منتج</h2><p>يُخصم المبلغ من حساب المستهلك ويُضاف للمنتج كعملية واحدة مسجلة.</p></div></div>
-            <form className="commission-transfer-form" onSubmit={transferCommission}>
-              <label>رقم المستهلك<input name="consumerPhone" type="tel" inputMode="tel" dir="ltr" placeholder="رقم حساب المستهلك" required /></label>
-              <label>رقم المنتج<input name="productPhone" type="tel" inputMode="tel" dir="ltr" placeholder="رقم حساب المنتج" required /></label>
-              <label>قيمة العمولة بالدينار<input name="amount" type="number" min="0.001" step="0.001" placeholder="0.000" required /></label>
-              <button className="button primary" disabled={busy}><CircleDollarSign size={16} /> تنفيذ التحويل</button>
-            </form>
-            <p className="hint">يشترط وجود الحسابين وتوفر رصيد كافٍ لدى المستهلك؛ لا يمكن أن يصبح رصيد أي حساب سالباً. تُسجل حركتا الخصم والإضافة في سجل الحسابين.</p>
+            <a className="button primary full" href="/transfer"><CircleDollarSign size={16} /> فتح نموذج التحويل</a>
+            <p className="hint">بيفتح صفحة فيها كل الكباتن، وبتختار لكل واحد إذا هو منتج أو مستهلك وبتكتب المبلغ.</p>
           </article>
           <article className="panel" style={{ gridColumn: "1 / -1" }}>
             <div className="panel-heading"><span className="panel-icon"><BadgeCheck size={19} /></span><div><h2>فحص رقم</h2><p>حالة الحساب وسجل إنشائه وتعديله وحذفه وحركات الجرد عليه</p></div></div>
@@ -1119,6 +1071,7 @@ export default function AdminHome() {
               <span className="panel-heading compact"><span className="panel-icon"><Users size={19} /></span><span><strong>إدارة الكباتن</strong><small>{captains.length} حساب مسجل</small></span></span>
               <span className="button ghost">{showCaptains ? "إخفاء الحسابات" : "عرض الحسابات"}</span>
             </button>
+            <a className="button primary" href="/captains"><Wallet size={16} /> إدارة الكابتن</a>
             {showCaptains && <input className="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="بحث بالاسم أو الهاتف" />}
           </div>
           {showCaptains && <>
