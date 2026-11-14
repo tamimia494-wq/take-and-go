@@ -111,27 +111,29 @@ export async function getGroupParticipantsViaSocket(fresh = false): Promise<Sock
   return participants;
 }
 
+export type ParticipantUpdateResult = { done: string[]; failed: Array<{ phone: string; status: string }> };
+
 /**
- * Removes members from the group, many per WhatsApp request. Returns the phones WhatsApp confirmed and, for the
- * others, the status it answered with.
+ * Adds or removes members, many per WhatsApp request. Returns the phones WhatsApp confirmed and, for the others,
+ * the status it answered with (403: their privacy blocks being added, 409: already a member, 408: they left recently).
  */
-export async function removeParticipantsViaSocket(phones: string[]): Promise<{ removed: string[]; failed: Array<{ phone: string; error: string }> }> {
+export async function updateParticipantsViaSocket(phones: string[], action: "add" | "remove"): Promise<ParticipantUpdateResult> {
   const { sock, groupId } = connectedSocket();
-  const removed: string[] = [];
-  const failed: Array<{ phone: string; error: string }> = [];
+  const done: string[] = [];
+  const failed: Array<{ phone: string; status: string }> = [];
   for (let start = 0; start < phones.length; start += 50) {
     const chunk = phones.slice(start, start + 50);
-    const results = await sock.groupParticipantsUpdate(groupId, chunk.map((phone) => `${phone}@s.whatsapp.net`), "remove");
+    const results = await sock.groupParticipantsUpdate(groupId, chunk.map((phone) => `${phone}@s.whatsapp.net`), action);
     chunk.forEach((phone, index) => {
       // In a LID-addressed group WhatsApp may answer with the anonymous id; then the answers follow the request order.
       const result = results.find((item) => item.jid?.split("@")[0]?.split(":")[0] === phone) ??
         (results.length === chunk.length ? results[index] : undefined);
-      if (result?.status === "200") removed.push(phone);
-      else failed.push({ phone, error: `WhatsApp answered ${result?.status ?? "nothing"}; is the bot a group admin?` });
+      if (result?.status === "200") done.push(phone);
+      else failed.push({ phone, status: result?.status ?? "no answer" });
     });
   }
   participantsCache = null;
-  return { removed, failed };
+  return { done, failed };
 }
 
 export async function sendPrivateViaSocket(phone: string, message: string): Promise<void> {

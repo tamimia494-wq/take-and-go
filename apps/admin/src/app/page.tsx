@@ -69,7 +69,7 @@ type GroupRemoval = {
   withoutAccount?: number;
   unresolved?: number;
   error?: string;
-  lastRun: { at: string; removed: string[]; failed: Array<{ phone: string; error: string }>; error: string | null } | null;
+  lastRun: { at: string; removed: string[]; failed: Array<{ phone: string; error: string }>; added: string[]; addFailed: Array<{ phone: string; error: string }>; error: string | null } | null;
 };
 type CommissionAudit = {
   checkedJobs: number;
@@ -908,7 +908,7 @@ export default function AdminHome() {
             <div className="panel-heading"><span className="panel-icon"><Users size={19} /></span><div><h2>إزالة من الجروب</h2><p>الحساب غير المفعل أو الرصيد صفر: الكل مرة وحدة، وبعدها خلال دقيقة</p></div></div>
             <p className="hint">
               {overview?.groupRemovalEnabled ? "✅ الإزالة التلقائية شغالة." : "⏸️ الإزالة التلقائية موقفة."} أرقام الإدارة والبوت ومشرفي الجروب والأرقام بدون حساب ما بتنشال.
-              يضل 0.5 د.أ محجوزة عند كل كابتن لأرضية الجروب، ومعها بيضل بالجروب ويقدر ينزّل طلبات، بس ما بياخذ طلب إلا إذا ضل معه 0.5 بعد العمولة.
+              اللي بنشال بيرجع للجروب تلقائياً أول ما يشحن ويكون حسابه مفعّل. يضل 0.5 د.أ محجوزة عند كل كابتن لأرضية الجروب، ومعها بيضل بالجروب ويقدر ينزّل طلبات، بس ما بياخذ طلب إلا إذا ضل معه 0.5 بعد العمولة.
             </p>
             <button className="button ghost full" disabled={busy} onClick={() => void loadGroupRemoval()}><Users size={17} /> عرض مين رح ينشال</button>
             <button className={`button full ${overview?.groupRemovalEnabled ? "ghost" : "primary"}`} disabled={busy} onClick={() => void setGroupRemovalEnabled(!overview?.groupRemovalEnabled)}>
@@ -933,6 +933,8 @@ export default function AdminHome() {
                 {groupRemoval.lastRun && (
                   <p>آخر تشغيل {new Date(groupRemoval.lastRun.at).toLocaleTimeString("ar-JO")}: انشال {groupRemoval.lastRun.removed.length}
                     {groupRemoval.lastRun.failed.length ? `، وفشل ${groupRemoval.lastRun.failed.length} (${groupRemoval.lastRun.failed[0]!.error})` : ""}
+                    {groupRemoval.lastRun.added?.length ? `، ورجع ${groupRemoval.lastRun.added.length} بعد الشحن` : ""}
+                    {groupRemoval.lastRun.addFailed?.length ? `، وما قدر يرجّع ${groupRemoval.lastRun.addFailed.length} (${groupRemoval.lastRun.addFailed[0]!.error})` : ""}
                     {groupRemoval.lastRun.error ? ` — ${groupRemoval.lastRun.error}` : ""}.</p>
                 )}
               </div>

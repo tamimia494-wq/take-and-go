@@ -75,6 +75,8 @@ model Captain {
   fullName       String?
   status         CaptainStatus  @default(PENDING_PROFILE)
   balanceFils    Int            @default(0)
+  /// Set when the system removed the captain from the WhatsApp group; they are added back once eligible again.
+  removedFromGroupAt DateTime?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   ledgerEntries  LedgerEntry[]
