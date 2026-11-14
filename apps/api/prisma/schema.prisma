@@ -79,6 +79,8 @@ model Captain {
   removedFromGroupAt DateTime?
   /// Never removed from the WhatsApp group: set by the admin, or automatically when someone adds them back by hand.
   groupRemovalExempt Boolean   @default(false)
+  /// The e-wallet or CliQ number withdrawals are paid to, entered by the captain.
+  payoutAccount  String?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   ledgerEntries  LedgerEntry[]
@@ -273,6 +275,8 @@ model WithdrawalRequest {
   id          String       @id @default(cuid())
   captainId   String
   amountFils  Int
+  /// The captain's e-wallet or CliQ number at the time of the request.
+  payoutAccount String?
   status      TopUpStatus  @default(PENDING)
   createdAt   DateTime     @default(now())
   reviewedAt  DateTime?

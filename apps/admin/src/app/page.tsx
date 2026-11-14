@@ -12,7 +12,7 @@ type Settings = { groupFloorJod: number; riderCommissionPerFiveJod: number; orde
 type Captain = { id: string; phone: string; fullName: string | null; status: "ACTIVE" | "PENDING_PROFILE" | "SUSPENDED"; balanceJod: number; createdAt: string };
 type Activity = { id: string; description: string; type: string; amountJod: number; createdAt: string; captain: { fullName: string | null; phone: string } };
 type PaymentMethod = { id: string; label: string; details: string };
-type WithdrawalRequest = { id: string; captainName: string; captainPhone: string; amountJod: number; balanceJod: number; createdAt: string };
+type WithdrawalRequest = { id: string; captainName: string; captainPhone: string; amountJod: number; balanceJod: number; payoutAccount: string | null; createdAt: string };
 type TopUpRequest = { id: string; captainName: string; captainPhone: string; amountJod: number; hasReceipt: boolean; status: string; createdAt: string };
 type CaptainAccountRequest = { id: string; fullName: string; phone: string; createdAt: string };
 type PhoneLookup = {
@@ -1202,6 +1202,7 @@ export default function AdminHome() {
               <div>
                 <strong>{request.captainName} · <span dir="ltr">{request.captainPhone}</span></strong>
                 <span>يطلب سحب {money(request.amountJod)} د.أ · رصيده الحالي {money(request.balanceJod)} د.أ · {new Intl.DateTimeFormat("ar-JO", { dateStyle: "short", timeStyle: "short" }).format(new Date(request.createdAt))}</span>
+                <span>💳 محفظته / كليك: {request.payoutAccount ? <bdi dir="ltr">{request.payoutAccount}</bdi> : "ما كتب رقم"}</span>
               </div>
               <div className="row-actions">
                 <button className="button small credit" disabled={busy || request.balanceJod < request.amountJod} onClick={() => void reviewWithdrawal(request, true)}>اعتماد</button>

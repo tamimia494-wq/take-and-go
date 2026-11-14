@@ -67,7 +67,7 @@ export default function CaptainHome() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [topUpOpen, setTopUpOpen] = useState(false);
   const [withdrawalOpen, setWithdrawalOpen] = useState(false);
-  const [withdrawal, setWithdrawal] = useState<{ balanceJod: number; pendingJod: number; availableJod: number } | null>(null);
+  const [withdrawal, setWithdrawal] = useState<{ balanceJod: number; pendingJod: number; availableJod: number; payoutAccount: string } | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [showLedger, setShowLedger] = useState(false);
   const [notice, setNotice] = useState("");
@@ -140,7 +140,7 @@ export default function CaptainHome() {
       return;
     }
     try {
-      setWithdrawal(await api<{ balanceJod: number; pendingJod: number; availableJod: number }>("/captain/withdrawal", token));
+      setWithdrawal(await api<{ balanceJod: number; pendingJod: number; availableJod: number; payoutAccount: string }>("/captain/withdrawal", token));
       setWithdrawalOpen(true);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر تحميل الرصيد المتاح للسحب.");
@@ -152,10 +152,12 @@ export default function CaptainHome() {
     setBusy(true);
     setError("");
     const form = event.currentTarget;
-    const amount = new FormData(form).get("amount");
+    const data = new FormData(form);
+    const amount = data.get("amount");
+    const payoutAccount = data.get("payoutAccount");
     try {
       const result = await api<{ id: string; amountJod: number }>(
-        "/captain/withdrawal", token, { method: "POST", body: JSON.stringify({ amount }) }
+        "/captain/withdrawal", token, { method: "POST", body: JSON.stringify({ amount, payoutAccount }) }
       );
       setNotice(`تم إرسال طلب سحب بمبلغ ${result.amountJod} د.أ إلى الإدارة، وسيُسحب من رصيدك بعد اعتماده.`);
       setWithdrawalOpen(false);
@@ -489,6 +491,11 @@ export default function CaptainHome() {
             {withdrawal.availableJod > 0 ? (
               <>
                 <input name="amount" type="number" min="0.001" max={withdrawal.availableJod} step="0.001" placeholder={`المبلغ من 0.001 إلى ${withdrawal.availableJod} د.أ`} required />
+                <label className="field-label">
+                  رقم محفظتك الإلكترونية أو كليك
+                  <input name="payoutAccount" type="text" dir="ltr" defaultValue={withdrawal.payoutAccount} minLength={3} maxLength={80} placeholder="رقم المحفظة أو اسم/رقم كليك" required />
+                </label>
+                <span>بنحوّلك المبلغ على هذا الرقم، وبنحفظه لطلباتك الجاية.</span>
                 <button className="primary-button" disabled={busy}>{busy ? "جارٍ الإرسال..." : "إرسال طلب السحب للإدارة"} <ArrowUpLeft size={18} /></button>
               </>
             ) : <span>لا يوجد رصيد متاح للسحب حالياً.</span>}

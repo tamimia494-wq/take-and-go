@@ -1322,16 +1322,28 @@ function withdrawableFils(balanceFils: number, pendingFils: number): number {
 }
 
 router.get("/captain/withdrawal", requireAuth("captain"), async (req, res) => {
-  const { balanceFils, pendingFils, availableFils } = await availableToWithdrawFils(req.user!.id);
-  res.json({ balanceJod: fromFils(balanceFils), pendingJod: fromFils(pendingFils), availableJod: fromFils(availableFils) });
+  const [{ balanceFils, pendingFils, availableFils }, captain] = await Promise.all([
+    availableToWithdrawFils(req.user!.id),
+    prisma.captain.findUniqueOrThrow({ where: { id: req.user!.id }, select: { payoutAccount: true } })
+  ]);
+  res.json({
+    balanceJod: fromFils(balanceFils),
+    pendingJod: fromFils(pendingFils),
+    availableJod: fromFils(availableFils),
+    payoutAccount: captain.payoutAccount ?? ""
+  });
 });
 
 router.post("/captain/withdrawal", requireAuth("captain"), async (req, res) => {
-  const parsed = z.object({ amount: z.union([z.string(), z.number()]) }).safeParse(req.body);
+  const parsed = z.object({
+    amount: z.union([z.string(), z.number()]),
+    payoutAccount: z.string().trim().min(3).max(80)
+  }).safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "أدخل مبلغ السحب." });
+    res.status(400).json({ error: "أدخل مبلغ السحب ورقم محفظتك الإلكترونية أو كليك." });
     return;
   }
+  const payoutAccount = parsed.data.payoutAccount;
   let amountFils: number;
   try {
     amountFils = toFils(parsed.data.amount);
@@ -1356,7 +1368,9 @@ router.post("/captain/withdrawal", requireAuth("captain"), async (req, res) => {
           ? `المبلغ أكبر من الرصيد المتاح للسحب (${fromFils(availableFils)} د.أ). يبقى ${fromFils(CAPTAIN_RESERVED_BALANCE_FILS)} د.أ محجوزة لأرضية الجروب.`
           : `لا يوجد رصيد متاح للسحب؛ آخر ${fromFils(CAPTAIN_RESERVED_BALANCE_FILS)} د.أ محجوزة لأرضية الجروب.`);
       }
-      return tx.withdrawalRequest.create({ data: { captainId: req.user!.id, amountFils } });
+      // Remembered for the next request, and kept on this one as it was when the captain asked.
+      await tx.captain.update({ where: { id: req.user!.id }, data: { payoutAccount } });
+      return tx.withdrawalRequest.create({ data: { captainId: req.user!.id, amountFils, payoutAccount } });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     res.json({ id: created.id, amountJod: fromFils(amountFils) });
   } catch (error) {
@@ -1376,8 +1390,9 @@ router.get("/admin/withdrawals", requireAuth("admin"), async (_req, res) => {
     select: {
       id: true,
       amountFils: true,
+      payoutAccount: true,
       createdAt: true,
-      captain: { select: { fullName: true, phone: true, balanceFils: true } }
+      captain: { select: { fullName: true, phone: true, balanceFils: true, payoutAccount: true } }
     }
   });
   res.json(requests.map((request) => ({
@@ -1386,6 +1401,7 @@ router.get("/admin/withdrawals", requireAuth("admin"), async (_req, res) => {
     captainPhone: request.captain.phone,
     amountJod: fromFils(request.amountFils),
     balanceJod: fromFils(request.captain.balanceFils),
+    payoutAccount: request.payoutAccount ?? request.captain.payoutAccount ?? null,
     createdAt: request.createdAt
   })));
 });

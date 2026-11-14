@@ -140,6 +140,7 @@ input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #126df21c; }
 .topup-card strong { font-size: 14px; color: #1d2735; }
 .topup-card span { font-size: 11px; color: #6b7789; line-height: 1.6; }
 .topup-card input { padding: 11px; border: 1px solid #dfe5ee; border-radius: 10px; font-size: 13px; background: #fff; }
+.topup-card .field-label { display: grid; gap: 6px; font-size: 12px; font-weight: 600; color: inherit; }
 .success-message { color: #18714f; background: #ebfbf4; border: 1px solid #c9f1df; border-radius: 10px; padding: 11px 14px; margin: 0 20px 12px; font-size: 11px; }
 .footer { padding: 0 20px 25px; text-align: center; color: #a2acba; font-size: 10px; direction: ltr; }
 .footer span { color: var(--blue); padding: 0 5px; }
