@@ -1,14 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUpLeft, CircleDollarSign, KeyRound, RefreshCw, UserRoundPlus, UserX, Wallet } from "lucide-react";
-import { accountTypeLabel, AdminFrame, api, listCaptains, LoginRequired, matchesCaptain, money, statusLabel, useAdminToken, type Captain } from "../admin-kit";
+import { ArrowUpLeft, CircleDollarSign, KeyRound, RefreshCw, UserRoundPlus, Wallet } from "lucide-react";
+import { accountTypeLabel, AdminFrame, api, LoginRequired, matchesCaptain, money, statusLabel, useAdminToken, type Captain } from "../admin-kit";
 import { amountInput } from "../amount";
 import { CaptainStatementSheet, CloseStatementButton, dateInputStyle, dateLabelStyle, defaultPeriod, downloadPdf, type CaptainWithStatement } from "../statement";
 
 // Every captain in one list; "إدارة الكابتن" opens that captain's top-up form, account statement and account actions.
 
 type AdjustAction = "credit" | "debit" | "debit_all";
+type CaptainTab = "available" | "inactive" | "removed";
 
 export default function CaptainsPage() {
   const { token, missing } = useAdminToken();
@@ -18,8 +19,7 @@ export default function CaptainsPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const [showInactive, setShowInactive] = useState(false);
-  const [inactiveQuery, setInactiveQuery] = useState("");
+  const [tab, setTab] = useState<CaptainTab>("available");
 
   const load = useCallback(async (authToken: string) => {
     setCaptains(await api<Captain[]>("/admin/captains", authToken));
@@ -46,7 +46,18 @@ export default function CaptainsPage() {
     }
   }
 
-  const { visible, hidden } = listCaptains(captains, query);
+  const available = captains.filter((captain) => captain.status === "ACTIVE" && captain.inGroup === true);
+  const inactive = captains.filter((captain) => captain.status !== "ACTIVE");
+  const removed = captains.filter((captain) => captain.status === "ACTIVE" && captain.inGroup === false);
+  const tabCounts: Record<CaptainTab, number> = {
+    available: available.length,
+    inactive: inactive.length,
+    removed: removed.length
+  };
+  const tabLists: Record<CaptainTab, Captain[]> = { available, inactive, removed };
+  const visibleCaptains = tabLists[tab]
+    .filter((captain) => matchesCaptain(captain, query))
+    .sort((left, right) => right.balanceJod - left.balanceJod);
 
   return (
     <AdminFrame title="إدارة الكباتن" subtitle="كل الكباتن عندك. حدد نوع حساب كل كابتن (منتج أو مستهلك)، واكبس «إدارة الكابتن» لتشحن رصيده أو تخصم منه أو تشوف كشف حسابه.">
@@ -54,103 +65,69 @@ export default function CaptainsPage() {
       {notice && <p className="notice" role="status">{notice}</p>}
       <section className="panel captains-panel">
         <div className="list-heading">
-          <span className="panel-heading compact"><span><strong>كل الكباتن</strong><small>{captains.length} حساب</small></span></span>
-          <input className="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="بحث بالرقم أو الاسم (يظهر المخفيين كمان)" />
+          <span className="panel-heading compact"><span><strong>قائمة الكباتن</strong><small>{captains.length} حساب</small></span></span>
+          <input className="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="بحث بالرقم أو الاسم" />
           <button type="button" className="button ghost" disabled={busy} onClick={() => void load(token)}><RefreshCw size={16} /> تحديث</button>
+        </div>
+        <div className="captain-tabs" role="tablist" aria-label="تصنيفات الكباتن">
+          {([
+            ["available", "المتاحين"],
+            ["inactive", "غير المفعلين"],
+            ["removed", "تمت إزالتهم"]
+          ] as Array<[CaptainTab, string]>).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={tab === key}
+              className={tab === key ? "captain-tab active" : "captain-tab"}
+              onClick={() => { setTab(key); setOpenId(null); setQuery(""); }}
+            >
+              {label} <b>{tabCounts[key]}</b>
+            </button>
+          ))}
         </div>
         <div className="table-wrap captain-list">
           <table><thead><tr><th>الكابتن / الهاتف</th><th>الرصيد</th><th>الحالة</th><th>نوع الحساب</th><th>إجراءات</th></tr></thead>
-            <tbody>{visible.map((captain) => (
+            <tbody>{visibleCaptains.map((captain) => (
               <CaptainRow
                 key={captain.id}
                 captain={captain}
                 token={token}
                 open={openId === captain.id}
                 busy={busy}
+                tab={tab}
                 onToggle={() => setOpenId(openId === captain.id ? null : captain.id)}
                 perform={perform}
                 onError={setError}
               />
             ))}</tbody>
           </table>
-          {!visible.length && <div className="empty">{!captains.length ? "جارٍ التحميل..." : query.trim() ? "لا يوجد كباتن مطابقون للبحث." : "ما في كباتن مفعّلين معهم رصيد."}</div>}
-          {hidden > 0 && <div className="hidden-note">{hidden} حساب مخفي (رصيده صفر أو مش مفعّل). ابحث برقمه أو اسمه لتشوفه.</div>}
+          {!visibleCaptains.length && (
+            <div className="empty">
+              {!captains.length
+                ? "جارٍ التحميل..."
+                : query.trim()
+                  ? "لا يوجد كباتن مطابقون للبحث."
+                  : tab === "available"
+                    ? "ما في كباتن متاحين بالجروب."
+                    : tab === "inactive"
+                      ? "كل الحسابات مفعلة."
+                      : "ما في كباتن تمت إزالتهم من الجروب."}
+            </div>
+          )}
         </div>
       </section>
-      <InactiveSection
-        captains={captains}
-        open={showInactive}
-        query={inactiveQuery}
-        busy={busy}
-        onToggle={() => setShowInactive((value) => !value)}
-        onQuery={setInactiveQuery}
-        onAdd={(captain) => void perform(async () => {
-          const who = captain.fullName ?? captain.phone;
-          const result = await api<{ added: boolean; alreadyIn: boolean; error?: string }>(`/admin/captains/${captain.id}/add-to-group`, token, { method: "POST" });
-          if (result.error) throw new Error(`ما قدر يضيف ${who}: ${result.error}.`);
-          return result.added ? `تمت إضافة ${who} للجروب.` : `${who} موجود أصلاً بالجروب.`;
-        })}
-      />
     </AdminFrame>
   );
 }
 
-/** Captains whose account is not active, and the ones the system removed from the group, each with an add button. */
-function InactiveSection({ captains, open, query, busy, onToggle, onQuery, onAdd }: {
-  captains: Captain[];
-  open: boolean;
-  query: string;
-  busy: boolean;
-  onToggle: () => void;
-  onQuery: (value: string) => void;
-  onAdd: (captain: Captain) => void;
-}) {
-  const inactive = captains.filter((captain) => captain.status !== "ACTIVE");
-  const removed = captains.filter((captain) => captain.status === "ACTIVE" && captain.inGroup === false);
-  const filter = (list: Captain[]) => list.filter((captain) => matchesCaptain(captain, query));
-  const groups: Array<{ title: string; list: Captain[] }> = [
-    { title: `الحسابات المش مفعّلة (${inactive.length})`, list: filter(inactive) },
-    { title: `نزلوا من الجروب (${removed.length})`, list: filter(removed) }
-  ];
-  return (
-    <section className="panel captains-panel">
-      <div className="list-heading">
-        <span className="panel-heading compact"><span className="panel-icon"><UserX size={19} /></span><span><strong>الكباتن الغير مفعّلين</strong><small>{inactive.length} مش مفعّل · {removed.length} نزلوا من الجروب</small></span></span>
-        <button type="button" className="button ghost" aria-expanded={open} onClick={onToggle}>{open ? "إخفاء" : "عرض"}</button>
-      </div>
-      {open && (
-        <div className="table-wrap captain-list">
-          <input className="search" value={query} onChange={(event) => onQuery(event.target.value)} placeholder="بحث بالرقم أو الاسم" />
-          {groups.map((group) => (
-            <div key={group.title}>
-              <h3 style={{ color: "#000", fontSize: 16, fontWeight: 800, margin: "14px 4px 6px" }}>{group.title}</h3>
-              <table><thead><tr><th>الكابتن / الهاتف</th><th>الرصيد</th><th>الحالة</th><th>الجروب</th></tr></thead>
-                <tbody>{group.list.map((captain) => (
-                  <tr key={captain.id}>
-                    <td data-label="الكابتن / الهاتف"><span className="captain-avatar">{(captain.fullName ?? "؟").slice(0, 1)}</span><span className="captain-identity"><strong>{captain.fullName ?? "بانتظار تفعيل الحساب"}</strong><small dir="ltr">{captain.phone}</small></span></td>
-                    <td data-label="الرصيد" className="money-cell">{money(captain.balanceJod)} د.أ</td>
-                    <td data-label="الحالة"><span className={`status-pill ${captain.status.toLowerCase()}`}>{statusLabel(captain.status)}</span>
-                      {captain.inGroup === false ? <small style={{ display: "block", marginTop: 4 }}>نزل من الجروب{captain.removedFromGroupAt ? ` · ${new Intl.DateTimeFormat("ar-JO", { dateStyle: "short" }).format(new Date(captain.removedFromGroupAt))}` : ""}</small> : null}</td>
-                    <td data-label="الجروب"><div className="row-actions">
-                      <button type="button" className="button small primary" disabled={busy} onClick={() => onAdd(captain)}><UserRoundPlus size={14} /> إضافة للجروب</button>
-                    </div></td>
-                  </tr>
-                ))}</tbody>
-              </table>
-              {!group.list.length && <div className="empty">{query.trim() ? "ما في حدا مطابق للبحث." : "ما في حدا."}</div>}
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function CaptainRow({ captain, token, open, busy, onToggle, perform, onError }: {
+function CaptainRow({ captain, token, open, busy, tab, onToggle, perform, onError }: {
   captain: Captain;
   token: string;
   open: boolean;
   busy: boolean;
+  tab: CaptainTab;
   onToggle: () => void;
   perform: (action: () => Promise<string>) => Promise<void>;
   onError: (message: string) => void;
@@ -179,6 +156,19 @@ function CaptainRow({ captain, token, open, busy, onToggle, perform, onError }: 
           ))}
         </div></td>
         <td data-label="إجراءات"><div className="row-actions">
+          {tab !== "available" && (
+            <button type="button" className="button small primary" disabled={busy} onClick={() => void perform(async () => {
+              const result = await api<{ added: boolean; alreadyIn: boolean; error?: string }>(
+                `/admin/captains/${captain.id}/add-to-group`,
+                token,
+                { method: "POST" }
+              );
+              if (result.error) throw new Error(`ما قدر يضيف ${who}: ${result.error}.`);
+              return result.added ? `تمت إضافة ${who} للجروب.` : `${who} موجود أصلاً بالجروب.`;
+            })}>
+              <UserRoundPlus size={14} /> إضافة للجروب
+            </button>
+          )}
           <button type="button" className={open ? "button small primary" : "button small ghost"} aria-expanded={open} onClick={onToggle}>
             <Wallet size={14} /> {open ? "إغلاق" : "إدارة الكابتن"}
           </button>

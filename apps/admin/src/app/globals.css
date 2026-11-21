@@ -112,6 +112,15 @@ input:focus { border-color: var(--blue); box-shadow: 0 0 0 3px #126df21b; }
 .button.full { width: 100%; padding: 12px; }
 .import-panel .hint { margin-top: 12px; }
 .captains-panel { padding-bottom: 8px; }
+.captain-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0 0 14px; }
+.captain-tab { min-height: 44px; border: 1px solid var(--line); border-radius: 10px; background: #fff; color: #64728a; font-size: 11px; font-weight: 700; }
+.captain-tab b { display: inline-grid; place-items: center; min-width: 24px; height: 24px; margin-right: 6px; border-radius: 20px; background: #edf2f8; color: #64728a; font-size: 10px; }
+.captain-tab.active { border-color: #126df2; background: #edf4ff; color: #126df2; }
+.captain-tab.active b { background: #126df2; color: #fff; }
+.admin-shell .captain-tab { color: #d4deec; background: #161f33; border-color: #2e3b57; }
+.admin-shell .captain-tab b { color: #d4deec; background: #27334a; }
+.admin-shell .captain-tab.active { color: #1c2434; background: linear-gradient(100deg,#ffd23f,#f7b500); border-color: #f7b500; }
+.admin-shell .captain-tab.active b { color: #1c2434; background: rgba(255,255,255,.55); }
 .list-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
 .captains-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex: 1; min-width: 0; border: 0; padding: 0; color: inherit; background: transparent; text-align: right; font: inherit; cursor: pointer; }
 .captains-toggle .panel-heading { display: flex; align-items: center; gap: 10px; }
