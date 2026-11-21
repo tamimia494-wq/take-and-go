@@ -17,6 +17,8 @@ export type Captain = {
   accountType: "PRODUCER" | "CONSUMER" | null;
   /** When the system removed them from the WhatsApp group; null when it did not. */
   removedFromGroupAt: string | null;
+  /** Whether the captain is currently in the WhatsApp group. Null when the group could not be read. */
+  inGroup: boolean | null;
   createdAt: string;
 };
 

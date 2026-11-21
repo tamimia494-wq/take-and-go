@@ -444,7 +444,7 @@ export default function AdminHome() {
       const run = result.run;
       setNotice(!enabled ? "تم إيقاف الإزالة التلقائية من الجروب."
         : run?.error ? `تم التشغيل، بس الإزالة فشلت: ${run.error}`
-        : `تم التشغيل وانشال ${run?.removed.length ?? 0} عضو${run?.failed.length ? `، وفشل ${run.failed.length} (${run.failed[0]!.error})` : ""}.`);
+        : `تم التشغيل ونزل ${run?.removed.length ?? 0} عضو${run?.failed.length ? `، وفشل ${run.failed.length} (${run.failed[0]!.error})` : ""}.`);
       await refresh(token);
       if (groupRemoval) setGroupRemoval({ ...groupRemoval, enabled });
     } catch (reason) {
@@ -844,7 +844,7 @@ export default function AdminHome() {
                   </>
                 )}
                 {groupRemoval.lastRun && (
-                  <p>آخر تشغيل {new Date(groupRemoval.lastRun.at).toLocaleTimeString("ar-JO")}: انشال {groupRemoval.lastRun.removed.length}
+                  <p>آخر تشغيل {new Date(groupRemoval.lastRun.at).toLocaleTimeString("ar-JO")}: نزل {groupRemoval.lastRun.removed.length}
                     {groupRemoval.lastRun.failed.length ? `، وفشل ${groupRemoval.lastRun.failed.length} (${groupRemoval.lastRun.failed[0]!.error})` : ""}
                     {groupRemoval.lastRun.added?.length ? `، ورجع ${groupRemoval.lastRun.added.length} بعد الشحن` : ""}
                     {groupRemoval.lastRun.addFailed?.length ? `، وما قدر يرجّع ${groupRemoval.lastRun.addFailed.length} (${groupRemoval.lastRun.addFailed[0]!.error})` : ""}

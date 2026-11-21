@@ -106,16 +106,16 @@ function InactiveSection({ captains, open, query, busy, onToggle, onQuery, onAdd
   onAdd: (captain: Captain) => void;
 }) {
   const inactive = captains.filter((captain) => captain.status !== "ACTIVE");
-  const removed = captains.filter((captain) => captain.status === "ACTIVE" && captain.removedFromGroupAt);
+  const removed = captains.filter((captain) => captain.status === "ACTIVE" && captain.inGroup === false);
   const filter = (list: Captain[]) => list.filter((captain) => matchesCaptain(captain, query));
   const groups: Array<{ title: string; list: Captain[] }> = [
     { title: `الحسابات المش مفعّلة (${inactive.length})`, list: filter(inactive) },
-    { title: `انشالوا من الجروب (${removed.length})`, list: filter(removed) }
+    { title: `نزلوا من الجروب (${removed.length})`, list: filter(removed) }
   ];
   return (
     <section className="panel captains-panel">
       <div className="list-heading">
-        <span className="panel-heading compact"><span className="panel-icon"><UserX size={19} /></span><span><strong>الكباتن الغير مفعّلين</strong><small>{inactive.length} مش مفعّل · {removed.length} انشالوا من الجروب</small></span></span>
+        <span className="panel-heading compact"><span className="panel-icon"><UserX size={19} /></span><span><strong>الكباتن الغير مفعّلين</strong><small>{inactive.length} مش مفعّل · {removed.length} نزلوا من الجروب</small></span></span>
         <button type="button" className="button ghost" aria-expanded={open} onClick={onToggle}>{open ? "إخفاء" : "عرض"}</button>
       </div>
       {open && (
@@ -130,7 +130,7 @@ function InactiveSection({ captains, open, query, busy, onToggle, onQuery, onAdd
                     <td data-label="الكابتن / الهاتف"><span className="captain-avatar">{(captain.fullName ?? "؟").slice(0, 1)}</span><span className="captain-identity"><strong>{captain.fullName ?? "بانتظار تفعيل الحساب"}</strong><small dir="ltr">{captain.phone}</small></span></td>
                     <td data-label="الرصيد" className="money-cell">{money(captain.balanceJod)} د.أ</td>
                     <td data-label="الحالة"><span className={`status-pill ${captain.status.toLowerCase()}`}>{statusLabel(captain.status)}</span>
-                      {captain.removedFromGroupAt ? <small style={{ display: "block", marginTop: 4 }}>انشال {new Intl.DateTimeFormat("ar-JO", { dateStyle: "short" }).format(new Date(captain.removedFromGroupAt))}</small> : null}</td>
+                      {captain.inGroup === false ? <small style={{ display: "block", marginTop: 4 }}>نزل من الجروب{captain.removedFromGroupAt ? ` · ${new Intl.DateTimeFormat("ar-JO", { dateStyle: "short" }).format(new Date(captain.removedFromGroupAt))}` : ""}</small> : null}</td>
                     <td data-label="الجروب"><div className="row-actions">
                       <button type="button" className="button small primary" disabled={busy} onClick={() => onAdd(captain)}><UserRoundPlus size={14} /> إضافة للجروب</button>
                     </div></td>

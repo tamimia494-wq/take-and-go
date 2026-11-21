@@ -424,7 +424,43 @@ router.get("/admin/captains", requireAuth("admin"), async (_req, res) => {
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     select: { id: true, phone: true, fullName: true, status: true, balanceFils: true, accountType: true, removedFromGroupAt: true, createdAt: true }
   });
-  res.json(captains.map((captain) => ({ ...captain, balanceJod: fromFils(captain.balanceFils) })));
+
+  let memberPhones: Set<string> | null = null;
+  try {
+    const members = await getGroupMembers(true);
+    memberPhones = new Set(members.map((member) => member.phone).filter((phone): phone is string => phone !== null));
+  } catch (error) {
+    console.warn("Could not reconcile captains with WhatsApp group:", error);
+  }
+
+  let reconciled = captains;
+  if (memberPhones) {
+    const now = new Date();
+    reconciled = await Promise.all(captains.map(async (captain) => {
+      const inGroup = memberPhones!.has(captain.phone);
+      if (captain.status === "ACTIVE" && !inGroup && !captain.removedFromGroupAt) {
+        return prisma.captain.update({
+          where: { id: captain.id },
+          data: { removedFromGroupAt: now },
+          select: { id: true, phone: true, fullName: true, status: true, balanceFils: true, accountType: true, removedFromGroupAt: true, createdAt: true }
+        });
+      }
+      if (captain.status === "ACTIVE" && inGroup && captain.removedFromGroupAt) {
+        return prisma.captain.update({
+          where: { id: captain.id },
+          data: { removedFromGroupAt: null },
+          select: { id: true, phone: true, fullName: true, status: true, balanceFils: true, accountType: true, removedFromGroupAt: true, createdAt: true }
+        });
+      }
+      return captain;
+    }));
+  }
+
+  res.json(reconciled.map((captain) => ({
+    ...captain,
+    balanceJod: fromFils(captain.balanceFils),
+    inGroup: memberPhones ? memberPhones.has(captain.phone) : null
+  })));
 });
 
 router.post("/admin/captains/:id/add-to-group", requireAuth("admin"), async (req, res) => {
