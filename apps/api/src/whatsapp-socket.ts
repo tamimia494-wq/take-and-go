@@ -1,6 +1,7 @@
 import type { AuthenticationCreds, SignalDataTypeMap, WAMessage, WASocket } from "@whiskeysockets/baileys";
 import { config } from "./config";
 import { prisma } from "./db";
+import { hasMention } from "./mentions";
 import { markGroupMessageDeleted, saveGroupMessage, storedMessageParticipant } from "./message-store";
 
 // The direct WhatsApp Web connection (Baileys) for the bot number: the only link to WhatsApp. Group messages come in
@@ -277,7 +278,8 @@ async function handleUpsert(lib: Baileys, message: WAMessage): Promise<void> {
     typeMessage: data.typeMessage,
     ...(text ? { textMessage: text } : {}),
     ...(data.quotedMessage ? { quotedMessage: data.quotedMessage } : {}),
-    ...(data.reactionMessageData ? { reactionMessageData: data.reactionMessageData } : {})
+    ...(data.reactionMessageData ? { reactionMessageData: data.reactionMessageData } : {}),
+    ...(data.hasMention ? { hasMention: true } : {})
   });
   if (incomingHandler) await incomingHandler(webhook);
 }
@@ -313,15 +315,21 @@ function toIncomingWebhook(lib: Baileys, message: WAMessage): IncomingWebhook | 
 
   const type = lib.getContentType(content);
   if (!type) return null;
-  const inner = content[type] as { text?: string | null; caption?: string | null; contextInfo?: { stanzaId?: string | null } | null } | string | null | undefined;
+  const inner = content[type] as {
+    text?: string | null;
+    caption?: string | null;
+    contextInfo?: { stanzaId?: string | null; mentionedJid?: Array<string | null> | null } | null;
+  } | string | null | undefined;
   const text = typeof inner === "string"
     ? inner
     : inner?.text ?? inner?.caption ?? undefined;
   const stanzaId = typeof inner === "object" && inner ? inner.contextInfo?.stanzaId ?? undefined : undefined;
+  const mentioned = hasMention(text, typeof inner === "object" && inner ? inner.contextInfo?.mentionedJid : undefined);
   return {
     ...base,
     messageData: {
       typeMessage: type === "conversation" ? "textMessage" : type,
+      ...(mentioned ? { hasMention: true } : {}),
       ...(text ? { textMessageData: { textMessage: text } } : {}),
       ...(stanzaId ? { extendedTextMessageData: { text: text ?? "", stanzaId }, quotedMessage: { stanzaId } } : {})
     }

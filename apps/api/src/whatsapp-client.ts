@@ -10,6 +10,7 @@ import {
 
 // Everything the app asks of WhatsApp, all through the direct Baileys link. History comes from the message store.
 export { fetchGroupHistory, fetchGroupMessage } from "./message-store";
+import { fetchGroupMessage as fetchStoredMessage } from "./message-store";
 
 let lastDeletion: { at: string; error: string | null } | null = null;
 
@@ -32,10 +33,17 @@ export async function sendPrivateMessage(phone: string, message: string): Promis
   await sendPrivateViaSocket(phone, message);
 }
 
-export async function deleteGroupMessage(messageId: string): Promise<void> {
+/**
+ * Deletes a group message for everyone. Returns false, without deleting, when the message mentions or tags
+ * someone: those are never deleted, for any reason.
+ */
+export async function deleteGroupMessage(messageId: string): Promise<boolean> {
+  const stored = await fetchStoredMessage(messageId);
+  if (stored?.hasMention === true) return false;
   try {
     await deleteViaSocket(messageId);
     lastDeletion = { at: new Date().toISOString(), error: null };
+    return true;
   } catch (error) {
     lastDeletion = { at: new Date().toISOString(), error: error instanceof Error ? error.message : String(error) };
     throw error;

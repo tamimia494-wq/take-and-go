@@ -15,6 +15,8 @@ export type Captain = {
   status: "ACTIVE" | "PENDING_PROFILE" | "SUSPENDED";
   balanceJod: number;
   accountType: "PRODUCER" | "CONSUMER" | null;
+  /** When the system removed them from the WhatsApp group; null when it did not. */
+  removedFromGroupAt: string | null;
   createdAt: string;
 };
 

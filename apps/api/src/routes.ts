@@ -9,7 +9,7 @@ import { commissionUnits } from "./pricing";
 import { buildStatement, statementPeriod, sumStatements, type StatementEntry } from "./statement";
 import { CAPTAIN_RESERVED_BALANCE_FILS, fromFils, hasSufficientCaptainReplyBalance, normalizePhone, phoneFromChatId, toFils } from "./money";
 import { getDeletionStatus, importGroupCaptains, isExcludedPhone } from "./whatsapp";
-import { addToppedUpCaptains, getLastGroupRemovalRun, previewGroupRemovals, setGroupRemovalExempt, startGroupSync, syncGroupMembership } from "./group-removal";
+import { addCaptainToGroup, addToppedUpCaptains, getLastGroupRemovalRun, previewGroupRemovals, setGroupRemovalExempt, startGroupSync, syncGroupMembership } from "./group-removal";
 import { getSocketState, logoutWhatsAppSocket, startWhatsAppSocket } from "./whatsapp-socket";
 import QRCode from "qrcode";
 import { getBotPhone, getGroupMembers, getLastDeletionStatus } from "./whatsapp-client";
@@ -419,9 +419,22 @@ router.get("/admin/phone-lookup", requireAuth("admin"), async (req, res) => {
 router.get("/admin/captains", requireAuth("admin"), async (_req, res) => {
   const captains = await prisma.captain.findMany({
     orderBy: [{ status: "asc" }, { createdAt: "desc" }],
-    select: { id: true, phone: true, fullName: true, status: true, balanceFils: true, accountType: true, createdAt: true }
+    select: { id: true, phone: true, fullName: true, status: true, balanceFils: true, accountType: true, removedFromGroupAt: true, createdAt: true }
   });
   res.json(captains.map((captain) => ({ ...captain, balanceJod: fromFils(captain.balanceFils) })));
+});
+
+router.post("/admin/captains/:id/add-to-group", requireAuth("admin"), async (req, res) => {
+  const captainId = req.params.id;
+  if (typeof captainId !== "string") {
+    res.status(400).json({ error: "معرّف الكابتن غير صالح." });
+    return;
+  }
+  try {
+    res.json(await addCaptainToGroup(captainId));
+  } catch (error) {
+    res.status(502).json({ error: error instanceof Error ? error.message : "تعذر الإضافة للجروب." });
+  }
 });
 
 router.put("/admin/captains/:id/account-type", requireAuth("admin"), async (req, res) => {

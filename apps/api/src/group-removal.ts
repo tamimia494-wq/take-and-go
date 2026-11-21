@@ -192,6 +192,29 @@ function addFailureText(status: string): string {
  * The admin's "add everyone who topped up" button: adds every captain with an active account and a balance above
  * zero who is not in the group, including people removed before the system recorded removals.
  */
+/**
+ * The admin's "إضافة للجروب" button for one captain. Someone added while still not eligible is exempted from removal,
+ * since the admin wants them in the group.
+ */
+export async function addCaptainToGroup(captainId: string): Promise<{ added: boolean; alreadyIn: boolean; error?: string }> {
+  const captain = await prisma.captain.findUnique({ where: { id: captainId }, select: { phone: true, status: true, balanceFils: true } });
+  if (!captain) throw new Error("الكابتن غير موجود.");
+  await running?.catch(() => null);
+  const members = await getGroupMembers(true);
+  const alreadyIn = members.some((member) => member.phone === captain.phone);
+  const result = alreadyIn ? { done: [], failed: [] } : await addGroupMembers([captain.phone]);
+  const added = result.done.includes(captain.phone);
+  const inGroup = alreadyIn || added || result.failed.some((item) => item.status === "409");
+  if (inGroup) {
+    await prisma.captain.update({
+      where: { id: captainId },
+      data: { removedFromGroupAt: null, ...(removalReason(captain) ? { groupRemovalExempt: true } : {}) }
+    });
+  }
+  const failure = result.failed.find((item) => item.status !== "409");
+  return { added, alreadyIn: inGroup && !added, ...(failure ? { error: addFailureText(failure.status) } : {}) };
+}
+
 export async function addToppedUpCaptains(): Promise<AddToppedUpResult> {
   await running?.catch(() => null);
   const eligible = await prisma.captain.findMany({

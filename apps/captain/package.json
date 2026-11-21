@@ -11,7 +11,7 @@
   "dependencies": {
     "html2pdf.js": "^0.14.0",
     "lucide-react": "^0.468.0",
-    "next": "^16.4.2",
+    "next": "^16.4.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

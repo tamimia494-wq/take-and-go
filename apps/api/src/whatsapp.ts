@@ -580,8 +580,7 @@ async function sweepUnauthorizedMessagesOnce(count: number): Promise<{ deleted: 
       await wasBelowMinimumBalance(captain, new Date(timestamp * 1000), requiredFils);
     if (!unauthorized) continue;
     try {
-      await deleteGroupMessage(messageId);
-      deleted += 1;
+      if (await deleteGroupMessage(messageId)) deleted += 1;
       sweptMessageIds.add(messageId);
     } catch (error) {
       console.warn(`Sweep could not delete message ${messageId}:`, error);
@@ -649,8 +648,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
     const captain = await prisma.captain.findUnique({ where: { phone: senderPhone } });
     if (!excludedAdmin && (!captain || captain.status !== "ACTIVE" || !hasSufficientCaptainReplyBalance(captain.balanceFils, 0))) {
       console.warn(`Deleting confirmation ${messageId}: sender cannot take orders, balance=${captain?.balanceFils ?? "unknown"} fils.`);
-      await deleteRejectedReplyMessage(messageId);
-      await notifyDeletion(
+      if (await deleteRejectedReplyMessage(messageId)) await notifyDeletion(
         webhook,
         senderPhone,
         !captain || captain.status !== "ACTIVE"
@@ -686,8 +684,7 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
         data: { status: "REJECTED" }
       });
       console.warn(`Deleting reply ${messageId}: sender is ${rejection}, balance=${captain?.balanceFils ?? "unknown"} fils.`);
-      await deleteRejectedReplyMessage(messageId);
-      await notifyDeletion(
+      if (await deleteRejectedReplyMessage(messageId)) await notifyDeletion(
         webhook,
         senderPhone,
         rejection === "unregistered"
@@ -772,8 +769,7 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
     }
 
     if (result.result === "insufficient" || result.result === "unregistered") {
-      await deleteRejectedReplyMessage(targetMessageId);
-      await notifyDeletion(
+      if (await deleteRejectedReplyMessage(targetMessageId)) await notifyDeletion(
         webhook,
         reply.senderPhone,
         result.result === "unregistered"
@@ -897,12 +893,12 @@ export function isExcludedPhone(phone: string): boolean {
   return isExcludedAdminPhone(phone);
 }
 
-async function deleteRejectedReplyMessage(messageId: string): Promise<void> {
+/** Returns false when the message was kept because it mentions or tags someone. */
+async function deleteRejectedReplyMessage(messageId: string): Promise<boolean> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
-      await deleteGroupMessage(messageId);
-      return;
+      return await deleteGroupMessage(messageId);
     } catch (error) {
       lastError = error;
       // Retrying now does not help while the link is down; the message is retried later.
