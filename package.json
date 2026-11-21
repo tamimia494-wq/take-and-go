@@ -24,5 +24,10 @@
   },
   "engines": {
     "node": ">=20.9.0"
+  },
+  "overrides": {},
+  "dependencies": {
+    "deepmerge-ts": "8.0.2",
+    "effect": "3.22.5"
   }
 }

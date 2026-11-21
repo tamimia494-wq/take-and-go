@@ -159,7 +159,10 @@ router.post("/captain/password", requireAuth("captain"), async (req, res) => {
     return;
   }
   const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
-  await prisma.captain.update({ where: { id: captain.id }, data: { passwordHash } });
+  await prisma.captain.update({
+    where: { id: captain.id },
+    data: { passwordHash, tokenVersion: { increment: 1 } }
+  });
   res.json({ ok: true });
 });
 
@@ -1066,7 +1069,10 @@ router.patch("/admin/captains/:id/status", requireAuth("admin"), async (req, res
   }
   const updated = await prisma.captain.update({
     where: { id: captainId },
-    data: { status: parsed.data.status }
+    data: {
+      status: parsed.data.status,
+      tokenVersion: { increment: 1 }
+    }
   });
   startGroupSync();
   res.json({ status: updated.status });
@@ -1085,7 +1091,10 @@ router.put("/admin/captains/:id/password", requireAuth("admin"), async (req, res
     return;
   }
   const passwordHash = await bcrypt.hash(parsed.data.password, 12);
-  const updated = await prisma.captain.updateMany({ where: { id: captainId }, data: { passwordHash } });
+  const updated = await prisma.captain.updateMany({
+    where: { id: captainId },
+    data: { passwordHash, tokenVersion: { increment: 1 } }
+  });
   if (updated.count === 0) {
     res.status(404).json({ error: "الكابتن غير موجود." });
     return;
@@ -1555,7 +1564,10 @@ router.post("/admin/password", requireAuth("admin"), async (req, res) => {
     return;
   }
   const passwordHash = await bcrypt.hash(parsed.data.newPassword, 10);
-  await prisma.admin.update({ where: { id: "admin" }, data: { passwordHash } });
+  await prisma.admin.update({
+    where: { id: "admin" },
+    data: { passwordHash, tokenVersion: { increment: 1 } }
+  });
   res.json({ ok: true });
 });
 
@@ -1634,7 +1646,7 @@ router.post("/booking/requests", async (req, res) => {
     rearSeat: z.boolean(),
     // The car is an optional line like the rear seat, priced from basePriceFils.
     wholeCar: z.boolean().default(false),
-    selections: z.record(z.union([z.string().trim().max(300), z.boolean()])).default({})
+    selections: z.record(z.string(), z.union([z.string().trim().max(300), z.boolean()])).default({})
   }).safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "تحقق من مواقع الانطلاق والوصول وعدد الركاب والحقول المطلوبة." });

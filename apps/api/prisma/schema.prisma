@@ -78,6 +78,7 @@ model Captain {
   id             String         @id @default(cuid())
   phone          String         @unique
   passwordHash   String
+  tokenVersion   Int            @default(0)
   fullName       String?
   status         CaptainStatus  @default(PENDING_PROFILE)
   balanceFils    Int            @default(0)
@@ -112,6 +113,7 @@ model Admin {
   id           String   @id @default(cuid())
   phone        String?  @unique
   passwordHash String
+  tokenVersion Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
@@ -130,6 +132,7 @@ model BookingCustomer {
   id                  String    @id @default(cuid())
   phone               String    @unique
   passwordHash        String
+  tokenVersion        Int       @default(0)
   failedLoginAttempts Int       @default(0)
   lockedUntil         DateTime?
   createdAt           DateTime  @default(now())

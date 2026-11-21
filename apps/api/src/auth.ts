@@ -26,8 +26,8 @@ const adminLoginSchema = z.object({
   password: z.string().min(1).max(128)
 });
 
-function issueToken(id: string, role: UserRole): string {
-  return jwt.sign({ sub: id, role }, config.jwtSecret, { expiresIn: "12h" });
+function issueToken(id: string, role: UserRole, tokenVersion = 0): string {
+  return jwt.sign({ sub: id, role, tokenVersion }, config.jwtSecret, { expiresIn: "12h" });
 }
 
 export async function captainLogin(req: Request, res: Response): Promise<void> {
@@ -55,7 +55,7 @@ export async function captainLogin(req: Request, res: Response): Promise<void> {
     return;
   }
   res.json({
-    token: issueToken(captain.id, "captain"),
+    token: issueToken(captain.id, "captain", captain.tokenVersion),
     needsProfile: captain.status === "PENDING_PROFILE",
     fullName: captain.fullName
   });
@@ -72,11 +72,11 @@ export async function adminLogin(req: Request, res: Response): Promise<void> {
     res.status(401).json({ error: "بيانات الدخول غير صحيحة." });
     return;
   }
-  res.json({ token: issueToken(admin.id, "admin") });
+  res.json({ token: issueToken(admin.id, "admin", admin.tokenVersion) });
 }
 
 export function requireAuth(role?: UserRole) {
-  return (req: Request, res: Response, next: NextFunction): void => {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const authorization = req.header("authorization");
     const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
     if (!token) {
@@ -94,6 +94,52 @@ export function requireAuth(role?: UserRole) {
       if (role && payload.role !== role) {
         res.status(403).json({ error: "ليس لديك صلاحية لتنفيذ هذا الإجراء." });
         return;
+      }
+
+      const tokenVersion = typeof payload.tokenVersion === "number" ? payload.tokenVersion : 0;
+      if (payload.role === "captain") {
+        const captain = await prisma.captain.findUnique({
+          where: { id: payload.sub },
+          select: { status: true, tokenVersion: true }
+        });
+        if (!captain) {
+          res.status(401).json({ error: "الحساب غير موجود. سجّل الدخول مجدداً." });
+          return;
+        }
+        if (captain.status === "SUSPENDED") {
+          res.status(403).json({ error: "الحساب موقوف. يرجى التواصل مع الإدارة." });
+          return;
+        }
+        if (captain.tokenVersion !== tokenVersion) {
+          res.status(401).json({ error: "تم إلغاء الجلسة. سجّل الدخول مجدداً." });
+          return;
+        }
+      } else if (payload.role === "admin") {
+        const admin = await prisma.admin.findUnique({
+          where: { id: payload.sub },
+          select: { tokenVersion: true }
+        });
+        if (!admin) {
+          res.status(401).json({ error: "الحساب غير موجود. سجّل الدخول مجدداً." });
+          return;
+        }
+        if (admin.tokenVersion !== tokenVersion) {
+          res.status(401).json({ error: "تم إلغاء الجلسة. سجّل الدخول مجدداً." });
+          return;
+        }
+      } else {
+        const customer = await prisma.bookingCustomer.findUnique({
+          where: { id: payload.sub },
+          select: { tokenVersion: true }
+        });
+        if (!customer) {
+          res.status(401).json({ error: "الحساب غير موجود. سجّل الدخول مجدداً." });
+          return;
+        }
+        if (customer.tokenVersion !== tokenVersion) {
+          res.status(401).json({ error: "تم إلغاء الجلسة. سجّل الدخول مجدداً." });
+          return;
+        }
       }
       req.user = { id: payload.sub, role: payload.role };
       next();
@@ -125,7 +171,7 @@ export async function customerRegister(req: Request, res: Response): Promise<voi
     const customer = await prisma.bookingCustomer.create({
       data: { phone, passwordHash: await bcrypt.hash(parsed.data.password, 12) }
     });
-    res.status(201).json({ token: issueToken(customer.id, "customer") });
+    res.status(201).json({ token: issueToken(customer.id, "customer", customer.tokenVersion) });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
       res.status(409).json({ error: "يوجد حساب مسجل بهذا الرقم. سجّل الدخول بدلاً من إنشاء حساب جديد." });
@@ -189,5 +235,5 @@ export async function customerLogin(req: Request, res: Response): Promise<void> 
     where: { id: customer.id },
     data: { failedLoginAttempts: 0, lockedUntil: null }
   });
-  res.json({ token: issueToken(customer.id, "customer") });
+  res.json({ token: issueToken(customer.id, "customer", customer.tokenVersion) });
 }

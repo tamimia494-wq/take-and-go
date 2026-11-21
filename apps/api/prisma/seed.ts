@@ -17,7 +17,7 @@ async function main() {
   const passwordHash = await bcrypt.hash(password, 12);
   await prisma.admin.upsert({
     where: { id: "admin" },
-    update: reset ? { passwordHash } : {},
+    update: reset ? { passwordHash, tokenVersion: { increment: 1 } } : {},
     create: { id: "admin", passwordHash }
   });
   if (reset) console.log("Admin password reset from ADMIN_PASSWORD. Remove ADMIN_PASSWORD_RESET now.");
