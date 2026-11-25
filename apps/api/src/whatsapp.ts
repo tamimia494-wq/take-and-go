@@ -318,7 +318,7 @@ async function recordMissedReply(replyMessageId: string): Promise<void> {
     console.warn(`Could not read liked reply ${replyMessageId} from the message store:`, error);
     return;
   }
-  if (!replyMessage) return;
+  if (!replyMessage || replyMessage.hasMention === true) return;
   const sourceMessageId = journalQuotedId(replyMessage);
   const replySenderId = stringValue(replyMessage.senderId) ?? "";
   const replySender = phoneFromChatId(replySenderId) ?? (replySenderId ? await resolveGroupSenderPhone(replySenderId) : null);
@@ -387,6 +387,7 @@ async function recoverJobsAndRepliesFromHistory(
       })
       : null;
     if (job) {
+      if (entry.hasMention === true) continue;
       // Replies from accounts that are not active are deleted live, and admins do not take orders.
       if (!captain || captain.status !== "ACTIVE" || isExcludedAdminPhone(senderPhone)) continue;
       if (await wasBelowMinimumBalance(captain, createdAt)) continue;
@@ -625,6 +626,9 @@ async function processIncomingWebhook(webhook: Webhook): Promise<void> {
   }
   const text = messageText(data);
   const sourceMessageId = quotedMessageId(data);
+  // A reply that mentions or tags someone is a conversation, not a captain taking the order: it is never recorded,
+  // charged or deleted.
+  if (sourceMessageId && data.hasMention === true) return;
   // Any reply to an order counts, whatever it says; the owner's 👍 on it is what charges the commission.
   const isConfirmationReply = Boolean(sourceMessageId && text && isConfirmation(text));
   const quotedJob = sourceMessageId
@@ -727,6 +731,10 @@ async function handleReaction(webhook: Webhook, data: Record<string, unknown>): 
       include: { job: { select: { id: true, sourceMessageId: true, sourceSenderPhone: true } } }
     }));
     if (!reply) {
+      if ((await fetchGroupMessage(targetMessageId))?.hasMention === true) {
+        console.info(`👍 reaction ${webhook.idMessage ?? "unknown"} ignored: it is on a message that mentions someone.`);
+        return;
+      }
       throw new Error(`Target reply ${targetMessageId} for 👍 reaction ${webhook.idMessage ?? "unknown"} is not available yet.`);
     }
     let sourceSenderPhone = reply.job.sourceSenderPhone;

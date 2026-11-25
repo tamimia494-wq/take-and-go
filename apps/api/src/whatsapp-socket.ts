@@ -142,14 +142,28 @@ export async function updateParticipantsViaSocket(phones: string[], action: "add
   return { done, failed };
 }
 
+// When a recipient's phone cannot decrypt a message the bot sent, it asks for it again. Baileys can only resend it
+// from this copy; without it the recipient sees "Waiting for this message" instead of the text.
+const sentMessages = new Map<string, WAMessage["message"]>();
+
+function rememberSentMessage(sent: WAMessage | undefined): void {
+  const id = sent?.key.id;
+  if (!id || !sent.message) return;
+  sentMessages.set(id, sent.message);
+  if (sentMessages.size > 2_000) {
+    const oldest = sentMessages.keys().next().value;
+    if (oldest) sentMessages.delete(oldest);
+  }
+}
+
 export async function sendPrivateViaSocket(phone: string, message: string): Promise<void> {
   const { sock } = connectedSocket();
-  await sock.sendMessage(`${phone}@s.whatsapp.net`, { text: message });
+  rememberSentMessage(await sock.sendMessage(`${phone}@s.whatsapp.net`, { text: message }));
 }
 
 export async function sendViaSocket(message: string): Promise<void> {
   const { sock, groupId } = connectedSocket();
-  await sock.sendMessage(groupId, { text: message });
+  rememberSentMessage(await sock.sendMessage(groupId, { text: message }));
 }
 
 export async function hasStoredSession(): Promise<boolean> {
@@ -200,7 +214,8 @@ async function connect(lib: Baileys): Promise<void> {
     logger: quietLogger,
     printQRInTerminal: false,
     markOnlineOnConnect: false,
-    syncFullHistory: false
+    syncFullHistory: false,
+    getMessage: async (key) => (key.id ? sentMessages.get(key.id) ?? undefined : undefined)
   });
   socket = sock;
 
