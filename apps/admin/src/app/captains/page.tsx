@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ArrowUpLeft, CircleDollarSign, KeyRound, RefreshCw, UserRoundPlus, Wallet } from "lucide-react";
 import { accountTypeLabel, AdminFrame, api, LoginRequired, matchesCaptain, money, statusLabel, useAdminToken, type Captain } from "../admin-kit";
 import { amountInput } from "../amount";
-import { CaptainStatementSheet, CloseStatementButton, dateInputStyle, dateLabelStyle, defaultPeriod, downloadPdf, type CaptainWithStatement } from "../statement";
+import { CaptainWeekSheet, WeeklyStatements, type AllCaptainsWeek } from "../statement";
 
 // Every captain in one list; "إدارة الكابتن" opens that captain's top-up form, account statement and account actions.
 
@@ -257,50 +257,23 @@ function AdjustForm({ captain, token, busy, perform }: {
   );
 }
 
-function StatementBox({ captain, token, onError }: { captain: Captain; token: string; onError: (message: string) => void }) {
-  const [period, setPeriod] = useState(defaultPeriod);
-  const [statement, setStatement] = useState<{ captain: CaptainWithStatement; from: string; to: string } | null>(null);
-  const [loading, setLoading] = useState(false);
-  const sheetRef = useRef<HTMLDivElement>(null);
-
-  async function show() {
-    setLoading(true);
-    try {
-      const params = new URLSearchParams({ from: period.from, to: period.to, phone: captain.phone });
-      const result = await api<{ captains: CaptainWithStatement[]; from: string; to: string }>(`/admin/statements?${params.toString()}`, token);
-      const found = result.captains[0];
-      if (!found) throw new Error("ما في كشف حساب لهذا الكابتن.");
-      setStatement({ captain: found, from: result.from, to: result.to });
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : "تعذر تحميل كشف الحساب.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function savePdf() {
-    if (!sheetRef.current || !statement) return;
-    try {
-      await downloadPdf(sheetRef.current, `captain-statement-${captain.phone}-${statement.from}-${statement.to}.pdf`);
-    } catch (reason) {
-      onError(reason instanceof Error ? reason.message : "تعذر تنزيل ملف PDF.");
-    }
-  }
-
+function StatementBox({ captain, token }: { captain: Captain; token: string; onError: (message: string) => void }) {
+  const [open, setOpen] = useState(false);
   return (
     <div style={{ display: "grid", gap: 10 }}>
       <strong>كشف حساب</strong>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "end" }}>
-        <label style={{ ...dateLabelStyle, color: "#000" }}>من<input type="date" style={dateInputStyle} value={period.from} onChange={(event) => setPeriod({ ...period, from: event.target.value })} /></label>
-        <label style={{ ...dateLabelStyle, color: "#000" }}>إلى<input type="date" style={dateInputStyle} value={period.to} onChange={(event) => setPeriod({ ...period, to: event.target.value })} /></label>
-        <button type="button" className="button ghost" disabled={loading} onClick={() => void show()}><Wallet size={16} /> {loading ? "جارٍ التحميل..." : "عرض كشف الحساب"}</button>
-        {statement && <button type="button" className="button ghost" onClick={() => void savePdf()}>تنزيل PDF</button>}
-      </div>
-      {statement && (
-        <div ref={sheetRef}>
-          <CloseStatementButton onClose={() => setStatement(null)} />
-          <CaptainStatementSheet captain={statement.captain} period={{ from: statement.from, to: statement.to }} />
-        </div>
+      {open ? (
+        <WeeklyStatements<AllCaptainsWeek>
+          load={(week) => api<AllCaptainsWeek>(`/admin/statements?${new URLSearchParams({ week: String(week), phone: captain.phone }).toString()}`, token)}
+          render={(page) => {
+            const found = page.captains[0];
+            return found ? <CaptainWeekSheet page={{ ...page, captain: found, jobs: page.jobs ?? [] }} /> : <div>ما في كشف حساب لهذا الكابتن.</div>;
+          }}
+          pdfName={`captain-statement-${captain.phone}.pdf`}
+          onClose={() => setOpen(false)}
+        />
+      ) : (
+        <button type="button" className="button ghost" onClick={() => setOpen(true)}><Wallet size={16} /> عرض كشف الحساب</button>
       )}
     </div>
   );

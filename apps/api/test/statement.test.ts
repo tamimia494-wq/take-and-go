@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildStatement, statementPeriod, sumStatements, type StatementEntry } from "../src/statement";
+import { buildStatement, readWeekOffset, statementPeriod, statementWeek, sumStatements, type StatementEntry } from "../src/statement";
 
 let clock = 0;
 function entry(partial: Partial<StatementEntry>): StatementEntry {
@@ -91,4 +91,26 @@ test("reads a statement period in Amman time, including the whole last day", () 
   assert.equal(period.end.toISOString(), "2026-10-31T21:00:00.000Z");
   assert.equal(statementPeriod("2026-10-31", "2026-10-01"), null);
   assert.equal(statementPeriod("bad", "2026-10-01"), null);
+});
+
+test("statement weeks run Friday 00:00 to Friday 00:00 Amman time", () => {
+  // Wednesday 25 Nov 2026, 10:00 Amman = 07:00 UTC. The week started Friday 20 Nov 00:00 Amman = Thursday 21:00 UTC.
+  const now = new Date("2026-11-25T07:00:00Z");
+  const current = statementWeek(0, now);
+  assert.equal(current.start.toISOString(), "2026-11-19T21:00:00.000Z");
+  assert.equal(current.end.toISOString(), "2026-11-26T21:00:00.000Z");
+  const previous = statementWeek(1, now);
+  assert.equal(previous.start.toISOString(), "2026-11-12T21:00:00.000Z");
+  assert.equal(previous.end.toISOString(), current.start.toISOString());
+  // Thursday 26 Nov 23:30 Amman still belongs to the week; Friday 27 Nov 00:30 Amman starts the next one.
+  assert.equal(statementWeek(0, new Date("2026-11-26T20:30:00Z")).start.toISOString(), "2026-11-19T21:00:00.000Z");
+  assert.equal(statementWeek(0, new Date("2026-11-26T21:30:00Z")).start.toISOString(), "2026-11-26T21:00:00.000Z");
+});
+
+test("reads the week offset from the query", () => {
+  assert.equal(readWeekOffset(undefined), 0);
+  assert.equal(readWeekOffset("3"), 3);
+  assert.equal(readWeekOffset("-1"), null);
+  assert.equal(readWeekOffset("abc"), null);
+  assert.equal(readWeekOffset("9999"), null);
 });

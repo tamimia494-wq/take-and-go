@@ -93,6 +93,7 @@ model Captain {
   updatedAt      DateTime       @updatedAt
   ledgerEntries  LedgerEntry[]
   replies        WhatsAppReply[]
+  disputes       StatementDispute[]
   topUpRequests  TopUpRequest[]
   withdrawalRequests WithdrawalRequest[]
 }
@@ -213,6 +214,8 @@ model WhatsAppJob {
   groupId           String
   sourceMessageId   String
   sourceSenderPhone String?
+  /// The order as the owner wrote it in the group, shown on account statements.
+  sourceText        String?
   priceDinars       Int
   riderPriceDinars  Int           @default(0)
   orderPriceDinars  Int           @default(0)
@@ -224,6 +227,7 @@ model WhatsAppJob {
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
   replies           WhatsAppReply[]
+  disputes          StatementDispute[]
 
   @@unique([groupId, sourceMessageId])
   @@index([status, createdAt])
@@ -344,4 +348,27 @@ model CaptainAuditLog {
 
   @@index([phone, createdAt])
   @@index([captainId, createdAt])
+}
+
+enum DisputeStatus {
+  OPEN
+  ACCEPTED
+  REJECTED
+}
+
+/// A captain's objection to an order on their statement, reviewed by the admin.
+model StatementDispute {
+  id         String        @id @default(cuid())
+  captainId  String
+  jobId      String
+  reason     String
+  status     DisputeStatus @default(OPEN)
+  adminNote  String?
+  createdAt  DateTime      @default(now())
+  resolvedAt DateTime?
+  captain    Captain       @relation(fields: [captainId], references: [id])
+  job        WhatsAppJob   @relation(fields: [jobId], references: [id])
+
+  @@unique([captainId, jobId])
+  @@index([status, createdAt])
 }

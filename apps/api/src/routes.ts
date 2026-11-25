@@ -6,7 +6,8 @@ import { adminLogin, captainLogin, customerLogin, customerRegister, requireAuth 
 import { repairCommissions, runCommissionAudit } from "./commission-repair";
 import { prisma } from "./db";
 import { commissionUnits } from "./pricing";
-import { buildStatement, statementPeriod, sumStatements, type StatementEntry } from "./statement";
+import { buildStatement, readWeekOffset, statementWeek, sumStatements, type StatementEntry } from "./statement";
+import { loadStatementJobs } from "./statement-jobs";
 import { CAPTAIN_RESERVED_BALANCE_FILS, fromFils, hasSufficientCaptainReplyBalance, normalizePhone, phoneFromChatId, toFils } from "./money";
 import { getDeletionStatus, importGroupCaptains, isExcludedPhone } from "./whatsapp";
 import { addCaptainToGroup, addToppedUpCaptains, getLastGroupRemovalRun, previewGroupRemovals, setGroupRemovalExempt, startGroupSync, syncGroupMembership } from "./group-removal";
@@ -764,28 +765,42 @@ async function loadStatements(period: { start: Date; end: Date }, captainId?: st
   }));
 }
 
-function readPeriod(query: Record<string, unknown>) {
-  return statementPeriod(String(query.from ?? ""), String(query.to ?? ""));
+/** One statement week: `offset` weeks back from this one, and whether anything happened before it. */
+async function loadStatementWeek(offset: number, captainId?: string, includeEntries = false) {
+  const period = statementWeek(offset);
+  const [captains, earlier] = await Promise.all([
+    loadStatements(period, captainId, includeEntries),
+    prisma.ledgerEntry.findFirst({
+      where: { createdAt: { lt: period.start }, ...(captainId ? { captainId } : {}) },
+      select: { id: true }
+    })
+  ]);
+  return {
+    week: { offset, start: period.start.toISOString(), end: period.end.toISOString() },
+    hasEarlier: earlier !== null,
+    captains
+  };
 }
 
 router.get("/captain/statement", requireAuth("captain"), async (req, res) => {
-  const period = readPeriod(req.query);
-  if (!period) {
-    res.status(400).json({ error: "اختر تاريخ البداية والنهاية بشكل صحيح." });
+  const offset = readWeekOffset(req.query.week);
+  if (offset === null) {
+    res.status(400).json({ error: "رقم الأسبوع غير صحيح." });
     return;
   }
-  const [captain] = await loadStatements(period, req.user!.id, true);
+  const { week, hasEarlier, captains } = await loadStatementWeek(offset, req.user!.id, true);
+  const captain = captains[0];
   if (!captain) {
     res.status(404).json({ error: "الحساب غير موجود." });
     return;
   }
-  res.json({ from: req.query.from, to: req.query.to, captain });
+  res.json({ week, hasEarlier, captain, jobs: await loadStatementJobs(captain.id, captain.entries ?? []) });
 });
 
 router.get("/admin/statements", requireAuth("admin"), async (req, res) => {
-  const period = readPeriod(req.query);
-  if (!period) {
-    res.status(400).json({ error: "اختر تاريخ البداية والنهاية بشكل صحيح." });
+  const offset = readWeekOffset(req.query.week);
+  if (offset === null) {
+    res.status(400).json({ error: "رقم الأسبوع غير صحيح." });
     return;
   }
   let captainId: string | undefined;
@@ -808,13 +823,87 @@ router.get("/admin/statements", requireAuth("admin"), async (req, res) => {
     }
     captainId = captain.id;
   }
-  const captains = await loadStatements(period, captainId, captainId !== undefined);
+  const { week, hasEarlier, captains } = await loadStatementWeek(offset, captainId, captainId !== undefined);
+  const jobs = captainId && captains[0] ? await loadStatementJobs(captainId, captains[0].entries ?? []) : undefined;
   res.json({
-    from: req.query.from,
-    to: req.query.to,
+    week,
+    hasEarlier,
     captains,
+    ...(jobs ? { jobs } : {}),
     totals: sumStatements(captains.map((captain) => ({ statement: captain.statement, balanceFils: captain.balanceFils })))
   });
+});
+
+/** A captain objects to an order on their statement; the admin reviews it. One objection per order. */
+router.post("/captain/disputes", requireAuth("captain"), async (req, res) => {
+  const parsed = z.object({
+    jobId: z.string().min(1).max(64),
+    reason: z.string().trim().min(3).max(500)
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "اكتب سبب الاعتراض (3 أحرف على الأقل)." });
+    return;
+  }
+  const captainId = req.user!.id;
+  const involved = await prisma.ledgerEntry.findFirst({
+    where: { captainId, reference: parsed.data.jobId },
+    select: { id: true }
+  });
+  if (!involved) {
+    res.status(404).json({ error: "هذا الطلب غير موجود في كشف حسابك." });
+    return;
+  }
+  try {
+    const dispute = await prisma.statementDispute.create({
+      data: { captainId, jobId: parsed.data.jobId, reason: parsed.data.reason }
+    });
+    res.status(201).json({ dispute });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      res.status(409).json({ error: "قدّمت اعتراضاً على هذا الطلب من قبل، والإدارة تراجعه." });
+      return;
+    }
+    throw error;
+  }
+});
+
+router.get("/admin/disputes", requireAuth("admin"), async (req, res) => {
+  const status = req.query.status === "ALL" ? undefined : "OPEN" as const;
+  const disputes = await prisma.statementDispute.findMany({
+    where: status ? { status } : {},
+    orderBy: { createdAt: "desc" },
+    take: 100,
+    include: { captain: { select: { id: true, fullName: true, phone: true, balanceFils: true } } }
+  });
+  const items = await Promise.all(disputes.map(async (dispute) => {
+    const entries = await prisma.ledgerEntry.findMany({
+      where: { captainId: dispute.captainId, reference: dispute.jobId },
+      select: { reference: true, amountFils: true, createdAt: true }
+    });
+    const [job] = await loadStatementJobs(dispute.captainId, entries);
+    return { ...dispute, job: job ?? null };
+  }));
+  res.json({ disputes: items, openCount: await prisma.statementDispute.count({ where: { status: "OPEN" } }) });
+});
+
+router.post("/admin/disputes/:id/resolve", requireAuth("admin"), async (req, res) => {
+  const parsed = z.object({
+    status: z.enum(["ACCEPTED", "REJECTED"]),
+    note: z.string().trim().max(500).optional()
+  }).safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "اختر قبول أو رفض الاعتراض." });
+    return;
+  }
+  const updated = await prisma.statementDispute.updateMany({
+    where: { id: String(req.params.id), status: "OPEN" },
+    data: { status: parsed.data.status, adminNote: parsed.data.note || null, resolvedAt: new Date() }
+  });
+  if (updated.count !== 1) {
+    res.status(404).json({ error: "الاعتراض غير موجود أو تمت مراجعته من قبل." });
+    return;
+  }
+  res.json({ ok: true });
 });
 
 router.post("/admin/captains/import", requireAuth("admin"), async (req, res) => {

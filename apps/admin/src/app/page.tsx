@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { AllStatementsSheet, CaptainStatementSheet, CloseStatementButton, NetProfitSheet, dateInputStyle, dateLabelStyle, defaultPeriod, downloadPdf, hasActivity, type CaptainWithStatement, type StatementTotals } from "./statement";
+import { useCallback, useEffect, useState } from "react";
+import { AllCaptainsWeekSheet, CaptainWeekSheet, NetProfitWeekSheet, WeeklyStatements, dateInputStyle, dateLabelStyle, type AllCaptainsWeek } from "./statement";
+import { DisputesPanel } from "./disputes";
 import { amountInput, blankZero } from "./amount";
 import { ArrowDownLeft, ArrowUpLeft, BadgeCheck, CircleDollarSign, KeyRound, LogOut, RefreshCw, Settings2, ShieldCheck, Trash2, UserRoundPlus, Users, Wallet } from "lucide-react";
 
@@ -132,14 +133,10 @@ export default function AdminHome() {
   const [whatsAppLink, setWhatsAppLink] = useState<WhatsAppLink | null>(null);
   const [groupRemoval, setGroupRemoval] = useState<GroupRemoval | null>(null);
   const [removalSearch, setRemovalSearch] = useState("");
-  const [statementPeriod, setStatementPeriod] = useState(defaultPeriod);
-  const [statements, setStatements] = useState<{ captains: CaptainWithStatement[]; totals: StatementTotals; from: string; to: string } | null>(null);
-  const [statementView, setStatementView] = useState<"captains" | "profit">("captains");
+  const [statementQuery, setStatementQuery] = useState<{ view: "captains" | "profit" | "phone"; phone: string; key: number } | null>(null);
   const [statementPhone, setStatementPhone] = useState("");
   const [auditPhone, setAuditPhone] = useState("");
   const [phoneLookup, setPhoneLookup] = useState<PhoneLookup | null>(null);
-  const [searchedStatementPhone, setSearchedStatementPhone] = useState("");
-  const statementsRef = useRef<HTMLDivElement>(null);
 
   const refresh = useCallback(async (authToken: string) => {
     const [home, list, methods, topUpList, requestList, withdrawalList] = await Promise.all([
@@ -220,43 +217,7 @@ export default function AdminHome() {
     }
   }
 
-  async function loadStatements(view: "captains" | "profit", phone?: string) {
-    setStatementView(view);
-    setSearchedStatementPhone(phone ?? "");
-    setBusy(true);
-    setError("");
-    if (phone) setStatements(null);
-    try {
-      const params = new URLSearchParams({ from: statementPeriod.from, to: statementPeriod.to });
-      if (phone) params.set("phone", phone.trim());
-      setStatements(await api<{ captains: CaptainWithStatement[]; totals: StatementTotals; from: string; to: string }>(
-        `/admin/statements?${params.toString()}`,
-        token,
-        { signal: AbortSignal.timeout(30000) }
-      ));
-    } catch (reason) {
-      if (phone) setStatements(null);
-      setError(reason instanceof Error ? reason.message : "تعذر تحميل كشف الحساب.");
-    } finally {
-      setBusy(false);
-    }
-  }
 
-  async function saveStatementsPdf() {
-    if (!statementsRef.current || !statements) return;
-    setBusy(true);
-    try {
-      const captainPhone = searchedStatementPhone ? statements.captains[0]?.phone : undefined;
-      const fileName = captainPhone
-        ? `captain-statement-${captainPhone}-${statements.from}-${statements.to}.pdf`
-        : `${statementView === "profit" ? "net-profit" : "captains-statement"}-${statements.from}-${statements.to}.pdf`;
-      await downloadPdf(statementsRef.current, fileName, statementView === "captains" && !captainPhone);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر تنزيل ملف PDF.");
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function startWhatsAppLink() {
     setError("");
@@ -925,35 +886,31 @@ export default function AdminHome() {
           <article className="panel" style={{ gridColumn: "1 / -1" }}>
             <div className="panel-heading"><span className="panel-icon"><Wallet size={19} /></span><div><h2>كشف حساب الكباتن</h2><p>الإنتاج والاستهلاك والشحن والسحب والأرضيات وصافي الربح لكل الكباتن بكبسة وحدة</p></div></div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "end", margin: "8px 0 12px" }}>
-              <label style={dateLabelStyle}>من <input style={dateInputStyle} type="date" value={statementPeriod.from} max={statementPeriod.to} onChange={(event) => setStatementPeriod({ ...statementPeriod, from: event.target.value })} /></label>
-              <label style={dateLabelStyle}>إلى <input style={dateInputStyle} type="date" value={statementPeriod.to} min={statementPeriod.from} onChange={(event) => setStatementPeriod({ ...statementPeriod, to: event.target.value })} /></label>
-              <button type="button" className="button primary" disabled={busy || !statementPeriod.from || !statementPeriod.to} onClick={() => void loadStatements("captains")}>عرض كشف الكباتن</button>
-              <button type="button" className="button primary" disabled={busy || !statementPeriod.from || !statementPeriod.to} onClick={() => void loadStatements("profit")}>كشف صافي الربح</button>
-              <label style={dateLabelStyle}>كشف حساب برقم الهاتف <input style={dateInputStyle} type="tel" inputMode="tel" dir="ltr" value={statementPhone} onChange={(event) => setStatementPhone(event.target.value)} placeholder="079xxxxxxx" /></label>
-              <button type="button" className="button primary" disabled={busy || !statementPeriod.from || !statementPeriod.to || !statementPhone.trim()} onClick={() => void loadStatements("captains", statementPhone)}>بحث عن كشف الحساب</button>
-              {statements && <button type="button" className="button ghost" disabled={busy} onClick={() => void saveStatementsPdf()}>تنزيل PDF</button>}
+              <button type="button" className="button primary" onClick={() => setStatementQuery({ view: "captains", phone: "", key: Date.now() })}>كشف الكباتن</button>
+              <button type="button" className="button primary" onClick={() => setStatementQuery({ view: "profit", phone: "", key: Date.now() })}>كشف صافي الربح</button>
+              <label style={{ ...dateLabelStyle, color: "inherit" }}>كشف حساب برقم الهاتف <input style={dateInputStyle} type="tel" inputMode="tel" dir="ltr" value={statementPhone} onChange={(event) => setStatementPhone(event.target.value)} placeholder="079xxxxxxx" /></label>
+              <button type="button" className="button primary" disabled={!statementPhone.trim()} onClick={() => setStatementQuery({ view: "phone", phone: statementPhone.trim(), key: Date.now() })}>بحث عن كشف الحساب</button>
             </div>
-            {statements && (
-              <div style={{ overflowX: "auto" }}>
-                <div ref={statementsRef} style={{ minWidth: statementView === "captains" && !searchedStatementPhone ? 900 : undefined }}>
-                  <CloseStatementButton onClose={() => setStatements(null)} />
-                  {statementView === "profit" ? (
-                    <NetProfitSheet totals={statements.totals} period={{ from: statements.from, to: statements.to }} />
-                  ) : searchedStatementPhone ? (
-                    statements.captains[0] ? (
-                      <CaptainStatementSheet captain={statements.captains[0]} period={{ from: statements.from, to: statements.to }} />
-                    ) : <div className="empty">لا يوجد حساب مسجل بهذا الرقم.</div>
-                  ) : (
-                    <AllStatementsSheet
-                      captains={statements.captains.filter((captain) => captain.status === "ACTIVE" && hasActivity(captain))}
-                      totals={statements.totals}
-                      period={{ from: statements.from, to: statements.to }}
-                    />
-                  )}
-                </div>
-              </div>
+            {statementQuery && (
+              <WeeklyStatements<AllCaptainsWeek>
+                key={statementQuery.key}
+                load={(week) => {
+                  const params = new URLSearchParams({ week: String(week) });
+                  if (statementQuery.view === "phone") params.set("phone", statementQuery.phone);
+                  return api<AllCaptainsWeek>(`/admin/statements?${params.toString()}`, token, { signal: AbortSignal.timeout(30000) });
+                }}
+                render={(page) => {
+                  if (statementQuery.view === "profit") return <NetProfitWeekSheet page={page} />;
+                  if (statementQuery.view === "captains") return <AllCaptainsWeekSheet page={page} />;
+                  const captain = page.captains[0];
+                  return captain ? <CaptainWeekSheet page={{ ...page, captain, jobs: page.jobs ?? [] }} /> : <div className="empty">لا يوجد حساب مسجل بهذا الرقم.</div>;
+                }}
+                pdfName={statementQuery.view === "phone" ? `captain-statement-${statementQuery.phone}.pdf` : statementQuery.view === "profit" ? "net-profit.pdf" : "captains-statement.pdf"}
+                onClose={() => setStatementQuery(null)}
+              />
             )}
           </article>
+          <DisputesPanel token={token} />
           <article className="panel commission-audit-panel">
             <div className="panel-heading"><span className="panel-icon"><BadgeCheck size={19} /></span><div><h2>تدقيق دفتر العمولات</h2><p>مطابقة خصم الكابتن وإضافة صاحب الطلب وعكس الإلغاء. يُخصم تلقائياً كل 5 دقائق أي رد عليه لايك ولم تُخصم عمولته.</p></div></div>
             <button className="button ghost full" disabled={busy} onClick={() => void runCommissionAudit()}>

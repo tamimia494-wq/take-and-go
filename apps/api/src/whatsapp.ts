@@ -253,6 +253,7 @@ async function recordJobFromMessage(
         groupId,
         sourceMessageId: messageId,
         sourceSenderPhone: senderPhone,
+        sourceText: text,
         ...(createdAt ? { createdAt } : {}),
         priceDinars,
         riderPriceDinars,

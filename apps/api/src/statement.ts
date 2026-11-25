@@ -168,3 +168,26 @@ export function statementPeriod(from: string, to: string): { start: Date; end: D
   end.setUTCDate(end.getUTCDate() + 1);
   return { start, end };
 }
+
+const AMMAN_OFFSET_MS = 3 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The statement week `offset` weeks back from the one containing `now` (0 = this week), in Amman time. A week runs
+ * from Friday 00:00 to the next Friday 00:00, so it closes with Thursday, when the weekly group floor is charged.
+ */
+export function statementWeek(offset: number, now = new Date()): { start: Date; end: Date } {
+  const local = new Date(now.getTime() + AMMAN_OFFSET_MS);
+  const daysSinceFriday = (local.getUTCDay() + 2) % 7;
+  const startLocal = Date.UTC(local.getUTCFullYear(), local.getUTCMonth(), local.getUTCDate()) - daysSinceFriday * DAY_MS;
+  const start = new Date(startLocal - AMMAN_OFFSET_MS - offset * 7 * DAY_MS);
+  return { start, end: new Date(start.getTime() + 7 * DAY_MS) };
+}
+
+/** Reads the `week` query value: a whole number of weeks back, 0 to 520. */
+export function readWeekOffset(value: unknown): number | null {
+  const raw = value === undefined ? "0" : String(value);
+  if (!/^\d{1,3}$/.test(raw)) return null;
+  const offset = Number(raw);
+  return offset <= 520 ? offset : null;
+}

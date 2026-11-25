@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { CaptainStatementSheet, CloseStatementButton, dateInputStyle, dateLabelStyle, defaultPeriod, downloadPdf, type CaptainWithStatement } from "./statement";
+import { useEffect, useState } from "react";
+import { CaptainWeekSheet, WeeklyStatements, type CaptainWeek, type StatementDispute } from "./statement";
 import { ArrowDownLeft, ArrowLeft, ArrowUpLeft, CarFront, Check, CircleDollarSign, Clock3, Copy, LogOut, Lock, Phone, ShieldCheck, UserRoundPlus, Wallet } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
@@ -74,35 +74,15 @@ export default function CaptainHome() {
   const [showAccountRequest, setShowAccountRequest] = useState(false);
   const [accountRequestSent, setAccountRequestSent] = useState(false);
   const [captainName, setCaptainName] = useState<string>("");
-  const [period, setPeriod] = useState(defaultPeriod);
-  const [statement, setStatement] = useState<{ captain: CaptainWithStatement; from: string; to: string } | null>(null);
-  const statementRef = useRef<HTMLDivElement>(null);
+  const [statementOpen, setStatementOpen] = useState(false);
 
-  async function loadStatement() {
-    setBusy(true);
-    setError("");
-    try {
-      setStatement(await api<{ captain: CaptainWithStatement; from: string; to: string }>(
-        `/captain/statement?from=${period.from}&to=${period.to}`,
-        token
-      ));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر تحميل كشف الحساب.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function saveStatementPdf() {
-    if (!statementRef.current || !statement) return;
-    setBusy(true);
-    try {
-      await downloadPdf(statementRef.current, `statement-${statement.from}-${statement.to}.pdf`);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر تنزيل ملف PDF.");
-    } finally {
-      setBusy(false);
-    }
+  async function submitDispute(jobId: string, reason: string): Promise<StatementDispute> {
+    const result = await api<{ dispute: StatementDispute }>("/captain/disputes", token, {
+      method: "POST",
+      body: JSON.stringify({ jobId, reason })
+    });
+    setNotice("وصل اعتراضك للإدارة، ورح تراجعه وترد عليك هون بالكشف.");
+    return result.dispute;
   }
 
   useEffect(() => {
@@ -515,18 +495,16 @@ export default function CaptainHome() {
           <article className="stat-card"><span className="stat-icon green"><ArrowDownLeft size={21} /></span><span className="stat-label">الركاب المكتملون</span><strong>{dashboard?.statistics.riders ?? 0}</strong><small>كل 5 د.أ = راكب واحد</small></article>
         </section>
         <section className="ledger-section">
-          <div className="section-heading"><div><p className="eyebrow">من تاريخ إلى تاريخ</p><h2>كشف الحساب</h2></div></div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "end", margin: "8px 0 12px" }}>
-            <label style={dateLabelStyle}>من <input style={dateInputStyle} type="date" value={period.from} max={period.to} onChange={(event) => setPeriod({ ...period, from: event.target.value })} /></label>
-            <label style={dateLabelStyle}>إلى <input style={dateInputStyle} type="date" value={period.to} min={period.from} onChange={(event) => setPeriod({ ...period, to: event.target.value })} /></label>
-            <button type="button" className="primary-button" disabled={busy || !period.from || !period.to} onClick={() => void loadStatement()}>عرض الكشف</button>
-            {statement && <button type="button" className="topup-button" disabled={busy} onClick={() => void saveStatementPdf()}>تنزيل PDF</button>}
-          </div>
-          {statement && (
-            <div ref={statementRef}>
-              <CloseStatementButton onClose={() => setStatement(null)} />
-              <CaptainStatementSheet captain={statement.captain} period={{ from: statement.from, to: statement.to }} />
-            </div>
+          <div className="section-heading"><div><p className="eyebrow">كل أسبوع لحال · من الجمعة للخميس</p><h2>كشف الحساب</h2></div></div>
+          {statementOpen ? (
+            <WeeklyStatements<CaptainWeek>
+              load={(week) => api<CaptainWeek>(`/captain/statement?week=${week}`, token)}
+              render={(page) => <CaptainWeekSheet page={page} onDispute={submitDispute} />}
+              pdfName="take-and-go-statement.pdf"
+              onClose={() => setStatementOpen(false)}
+            />
+          ) : (
+            <button type="button" className="primary-button" onClick={() => setStatementOpen(true)}>عرض كشف الحساب</button>
           )}
         </section>
         <section className="ledger-section">
