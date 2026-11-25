@@ -4,7 +4,10 @@ export function extractPriceAfterLabel(line: string): number | null {
   const normalized = normalizeDigits(line);
   // سعر / أجرة / توصيل are interchangeable, with a leading و/ب/ال (وتوصيل، بالسعر) or a trailing ه/ة (توصيله)
   // and "ب"/"بـ" or = before the number (توصيل بـ5، سعر=5).
-  const match = /(?:^|[\s:：،,])(?:[وبف])?(?:ال|بال|لل)?(?:(?:سعر|توصيل|أجر|اجر|اجار)[هة]?|حسابه)\s*(?:[:：=-]\s*)?(?:بـ?\s*)?(\d+)/u.exec(normalized);
+  const match = /(?:^|[\s:：،,])(?:[وبف])?(?:ال|بال|لل)?(?:(?:سعر|توصيل|أجر|اجر|اجار)[هة]?|حسابه)\s*(?:[:：=-]\s*)?(?:بـ?\s*)?(\d+)/u.exec(normalized) ??
+    // Many captains skip the label: a number right after راكب or اوردر (راكب 7، اوردر: 5) is the price too.
+    // Up to 3 digits only, so a phone number after the word is never read as a price.
+    /(?:^|[^\p{L}])(?:[وبف])?(?:ال)?(?:راكب(?:ين)?|ركاب|[اأإآ]وردر(?:ين|ات)?)\s*(?:[:：=-]\s*)?(?:بـ?\s*)?(\d{1,3})(?!\d)/u.exec(normalized);
   if (!match) return null;
   const amount = Number(match[1]);
   return Number.isSafeInteger(amount) && amount > 0 && amount <= 2_147_483_647

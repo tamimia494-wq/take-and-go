@@ -10,8 +10,26 @@ test("extracts the amount following supported Arabic price labels", () => {
   assert.equal(extractPriceAfterLabel("اجاره: ١٠"), 10);
   assert.equal(extractPriceAfterLabel("التوصيل ٢٠"), 20);
   assert.equal(extractPriceAfterLabel("حسابه: ٥"), 5);
-  assert.equal(extractPriceAfterLabel("راكب 25 د.أ"), null);
   assert.equal(extractPriceAfterLabel("سعر 0"), null);
+});
+
+test("reads a number right after راكب or اوردر as the price when no label is written", () => {
+  assert.equal(extractPriceAfterLabel("اوردر 5"), 5);
+  assert.equal(extractPriceAfterLabel("أوردر ٧"), 7);
+  assert.equal(extractPriceAfterLabel("الاوردر: 6"), 6);
+  assert.equal(extractPriceAfterLabel("اوردرين 10"), 10);
+  assert.equal(extractPriceAfterLabel("اوردر بـ8"), 8);
+  assert.equal(extractPriceAfterLabel("راكب 25 د.أ"), 25);
+  assert.equal(extractPriceAfterLabel("راكبين 12"), 12);
+  assert.equal(extractPriceAfterLabel("من الجبيهة للصويفية راكب 4"), 4);
+  // An explicit label still wins over the number after the word.
+  assert.equal(extractPriceAfterLabel("راكب 2 سعر 9"), 9);
+  // A number before the word, a phone number after it, or no number at all is not a price.
+  assert.equal(extractPriceAfterLabel("2 راكب"), null);
+  assert.equal(extractPriceAfterLabel("راكب 0797907580"), null);
+  assert.equal(extractPriceAfterLabel("اوردر من مطعم"), null);
+  assert.equal(extractPriceAfterLabel("مراكب 5"), null);
+  assert.equal(extractPriceAfterLabel("اوردر 0"), null);
 });
 
 test("reads توصيل exactly like سعر, with attached letters and separators", () => {
